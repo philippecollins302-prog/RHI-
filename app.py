@@ -415,6 +415,53 @@ def api_envois(semaine: str | None = None, c=Depends(db)):
     return base.envois(c, _lundi(semaine), maintenant()) | {"ecriture": interfast.ECRITURE}
 
 
+class Envoi(BaseModel):
+    semaine: str
+    cases: list[str] | None = None      # « CH00901|2026-09-28 » ; rien = toutes les prêtes
+
+
+@app.post("/api/interfast/envois", dependencies=[Depends(acces_bureau)])
+async def api_poser_cases(e: Envoi, c=Depends(db)):
+    """Pose dans le planning InterFast les cases prêtes d'une semaine validée.
+
+    Une à la fois, en série (le MCP se trompe sous les appels parallèles) ;
+    chaque référence est gardée dès qu'elle arrive, si bien qu'une panne au
+    milieu ne renvoie jamais deux fois la même case. Coupé tant que
+    ECRITURE = False : 403, et rien n'est tenté."""
+    if not interfast.ECRITURE:
+        raise HTTPException(403, "Écriture InterFast coupée : rien n'est envoyé (docs/interfast.md)")
+    t = getattr(app.state, "transport_interfast", None)
+    d = base.envois(c, _lundi(e.semaine), maintenant())
+    voulues = [x for x in d["cases"] if x["etat"] == "prête" and (e.cases is None or x["id"] in e.cases)]
+    posees, echecs = [], []
+    for case in voulues:
+        try:
+            ref = await interfast.poser_case(case, t)
+        except interfast.CaseSansReference as err:
+            base.case_posee(c, case, "À VÉRIFIER")
+            echecs.append({"id": case["id"], "erreur": str(err)})
+            continue
+        except interfast.InterFastIndisponible as err:
+            echecs.append({"id": case["id"], "erreur": str(err)})
+            continue
+        base.case_posee(c, case, ref)
+        posees.append({"id": case["id"], "ref": ref})
+    return {"posees": posees, "echecs": echecs}
+
+
+@app.post("/api/interfast/suivi", dependencies=[Depends(acces_bureau)])
+async def api_suivi(semaine: str, c=Depends(db)):
+    """Relit le planning InterFast (lecture seule) : quelles cases sont terminées."""
+    lundi = _lundi(semaine)
+    d = base.envois(c, lundi, maintenant())
+    techs = sorted({t for x in d["cases"] if x["ref"] for t in x["techniciens"]})
+    try:
+        lu = await interfast.terminees(lundi, techs, getattr(app.state, "transport_interfast", None))
+    except interfast.InterFastIndisponible as err:
+        raise HTTPException(503, str(err))
+    return base.cases_relues(c, lundi, lu["terminees"]) | {"tronques": lu["tronques"]}
+
+
 class Validation(BaseModel):
     personne: str
     semaine: str
@@ -431,7 +478,10 @@ def api_valider(v: Validation, c=Depends(db)):
 
 @app.delete("/api/validations", dependencies=[Depends(acces_bureau)])
 def api_devalider(personne: str, semaine: str, c=Depends(db)):
-    base.devalider(c, personne.upper(), _lundi(semaine))
+    try:
+        base.devalider(c, personne.upper(), _lundi(semaine))
+    except base.DejaDansInterFast as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 

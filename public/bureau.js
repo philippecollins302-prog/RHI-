@@ -311,29 +311,67 @@ async function ongletPersonnes() {
   };
 }
 
-// ── Vers InterFast : ce qui partirait, à blanc ──
+// ── Vers InterFast : les cases du planning, une par CH et par jour ──
 async function ongletEnvois() {
   const d = await api('/api/interfast/envois?semaine=' + vue.semaine);
-  const cl = {'prêt': 'p-vert', 'bloqué': 'p-rouge', 'déjà envoyé': 'p-ambre'};
+  const cl = {'prête': 'p-vert', 'bloquée': 'p-rouge', 'en attente': 'p-ambre', 'posée': 'p-ambre',
+    'à compléter': 'p-rouge', 'terminée': 'p-vert'};
+  const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  const ligneEquipe = (e) => `<tr>
+      <td>${esc(e.technicien)}${e.compte ? '' : ' <span class="pastille p-rouge">sans compte</span>'}
+        ${e.valide ? '' : ' <span class="pastille p-ambre">RHI non validé</span>'}</td>
+      <td>${esc(e.debut)}</td><td>${esc(e.fin)}</td><td>${esc(e.pause || '—')}</td>
+      <td class="n">${heures(e.heures)}</td></tr>`;
   $('#vue').innerHTML = choixSemaine() + `
     <div class="carte">
-      <p><strong>Rien n'est envoyé.</strong> ${d.ecriture ? '' : 'L\'écriture vers InterFast est coupée.'}
-        Voici ce qui partirait pour cette semaine si le chemin « une intervention par personne, par CH et
-        par jour » était branché (docs/interfast.md) — seulement pour les RHI <em>validés</em>.</p>
-      <p><span class="pastille p-vert">${esc(d.prets)} prêtes · ${heures(d.heures_pretes) || '0h'}</span>
-        <span class="pastille p-rouge">${esc(d.bloques)} bloquées</span>
-        <span class="doux">RHI validés : ${esc(d.personnes_validees.join(', ') || 'aucun')}</span></p>
-    </div>` + (d.lignes.length ? `<div class="defile"><table>
-      <tr><th>Jour</th><th>Technicien</th><th>CH</th><th>Client · chantier</th><th>Début</th><th class="n">Durée</th><th>État</th></tr>
-      ${d.lignes.map((l) => `<tr>
-        <td>${esc(l.jour.slice(8, 10))}/${esc(l.jour.slice(5, 7))}</td><td>${esc(l.technicien)}</td>
-        <td class="ch">${esc(l.ch)}</td><td>${esc(l.client)}<br><span class="doux">${esc(l.chantier)}</span></td>
-        <td>${esc(l.heure)}</td><td class="n">${heures(l.heures)}</td>
-        <td><span class="pastille ${esc(cl[l.etat] || '')}">${esc(l.etat)}</span>
-          ${l.blocages.length ? '<br><span class="doux">' + esc(l.blocages.join(' · ')) + '</span>' : ''}</td>
-      </tr>`).join('')}
-    </table></div>` : '<div class="rien">Aucun RHI validé cette semaine : rien ne partirait.</div>');
+      <p>Les heures entrent dans InterFast comme des <strong>cases du planning</strong> : une par CH et par jour,
+        avec toute l'équipe. RHI pose la case ; dans InterFast, on la <strong>termine</strong> en recopiant
+        les heures de chacun (début, fin, pause), puis on <strong>valide la feuille de temps</strong>
+        (Équipe → la fiche → Feuilles de temps, en orange tant qu'elle n'est pas validée).
+        Seules les heures validées comptent dans la marge du chantier.</p>
+      <p>${d.ecriture ? '' : '<span class="pastille p-ambre">Écriture vers InterFast coupée : rien ne part, on voit ce qui partirait.</span>'}</p>
+      <p><span class="pastille p-vert">${esc(d.pretes)} prêtes · ${heures(d.heures_pretes) || '0h'}</span>
+        <span class="pastille p-ambre">${esc(d.en_attente)} en attente de validation</span>
+        <span class="pastille p-rouge">${esc(d.bloquees)} bloquées</span>
+        <span class="pastille">${esc(d.posees)} posées · ${esc(d.terminees)} terminées</span></p>
+      <p>${d.ecriture && d.pretes ? `<button class="btn" id="poser">Poser les ${esc(d.pretes)} cases prêtes dans InterFast</button>` : ''}
+        ${d.posees + d.terminees ? '<button class="btn" id="relire">Relire le planning InterFast (✅ terminées)</button>' : ''}
+        <span id="retour-envoi"></span></p>
+    </div>` + (d.cases.length ? d.cases.map((x) => `
+    <div class="carte">
+      <span class="pastille ${esc(cl[x.etat] || '')}">${esc(x.etat)}</span>
+      <strong>${esc(date(x.jour))} · ${esc(x.heure)}–${esc(x.fin)}</strong>
+      <span class="ch">${esc(x.ch)}</span> ${esc(x.client)} <span class="doux">${esc(x.chantier)}</span>
+      ${x.ref ? `<span class="pastille">${esc(x.ref)}</span>` : ''}
+      ${x.blocages.length ? `<br><span class="doux">Bloquée : ${esc(x.blocages.join(' · '))}</span>` : ''}
+      ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
+      ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>` : ''}
+      <div class="defile"><table>
+        <tr><th>Pour terminer la case</th><th>Début</th><th>Fin</th><th>Pause</th><th class="n">Heures</th></tr>
+        ${x.equipe.map(ligneEquipe).join('')}
+      </table></div>
+    </div>`).join('') : '<div class="rien">Aucun pointage sur un CH cette semaine.</div>');
   brancherSemaine();
+  const retour = $('#retour-envoi');
+  const bouton = (id, fn) => { const b = $('#' + id); if (b) b.onclick = fn; };
+  bouton('poser', async () => {
+    retour.textContent = 'Envoi en cours, une case à la fois…';
+    try {
+      const r = await api('/api/interfast/envois', {method: 'POST', json: {semaine: vue.semaine}});
+      dire(`${r.posees.length} cases posées` + (r.echecs.length ? `, ${r.echecs.length} en échec : ` +
+        r.echecs.map((x) => x.id + ' — ' + x.erreur).join(' · ') : ''));
+      afficher();
+    } catch (e) { retour.textContent = e.message; }
+  });
+  bouton('relire', async () => {
+    retour.textContent = 'Lecture du planning InterFast…';
+    try {
+      const r = await api('/api/interfast/suivi?semaine=' + vue.semaine, {method: 'POST'});
+      dire(`${r.terminees.length} terminées, ${r.a_terminer.length} à terminer dans InterFast` +
+        (r.tronques.length ? ' (lecture incomplète pour ' + r.tronques.join(', ') + ')' : ''));
+      afficher();
+    } catch (e) { retour.textContent = e.message; }
+  });
 }
 
 // ── Marche en avant : chaque pose à venir face à ses études et sa fab ──

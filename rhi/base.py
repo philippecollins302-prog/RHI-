@@ -121,6 +121,15 @@ CREATE TABLE IF NOT EXISTS pointages (
   annule INTEGER NOT NULL DEFAULT 0,
   interfast TEXT                   -- réf. de la ligne créée dans InterFast
 );
+CREATE TABLE IF NOT EXISTS cases_interfast (
+  ch TEXT NOT NULL,
+  jour TEXT NOT NULL,
+  ref TEXT NOT NULL,               -- IN00123, rendu par InterFast
+  posee_le TEXT NOT NULL,
+  terminee INTEGER NOT NULL DEFAULT 0,   -- le ✅ du planning InterFast, relu
+  relue_le TEXT,
+  PRIMARY KEY (ch, jour)
+);
 CREATE INDEX IF NOT EXISTS pointages_personne ON pointages(personne, debut);
 CREATE INDEX IF NOT EXISTS pointages_ch ON pointages(ch);
 """
@@ -449,7 +458,19 @@ def valider(db, personne: str, lundi: dt.date, par: str) -> dict:
     return validation(db, personne, lundi)
 
 
+class DejaDansInterFast(ValueError):
+    """Dévalidation refusée : la semaine a déjà des cases dans InterFast."""
+
+
 def devalider(db, personne: str, lundi: dt.date) -> None:
+    """Rouvre une semaine à la correction — sauf si ses heures sont déjà
+    posées dans InterFast : une correction faite ensuite n'y arriverait
+    jamais, et les deux outils diraient deux choses sans que personne le
+    sache. On corrige alors d'abord la case dans InterFast."""
+    refs = refs_semaine(db, personne, lundi)
+    if refs:
+        raise DejaDansInterFast(f"Semaine de {personne} déjà posée dans InterFast ({', '.join(refs)}) : "
+                                "corriger d'abord ces cases dans InterFast")
     with db:
         db.execute("DELETE FROM validations WHERE personne=? AND lundi=?",
                    (personne, lundi.isoformat()))
@@ -1065,58 +1086,148 @@ def synthese_md(m: dict) -> str:
 
 # ═══════════════════════ VERS INTERFAST (à blanc) ═══════════════════════
 
-def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
-    """Ce que le chemin A de docs/interfast.md enverrait pour une semaine :
-    une intervention par personne, par CH et par jour, durée réelle,
-    SEULEMENT pour les RHI validés. Rien n'est écrit : on montre, pour que
-    le jour du branchement personne ne découvre ce qui part.
+LONG_H = 12
 
-    Une ligne est « bloquée » si InterFast ne pourrait pas la recevoir :
-    personne sans compte InterFast, CH inconnu d'InterFast, chantier sans
-    client (planifier_intervention exige un client)."""
-    fin = lundi + dt.timedelta(days=7)
-    valides = {r["personne"]: dict(r) for r in db.execute(
-        "SELECT * FROM validations WHERE lundi=?", (lundi.isoformat(),))}
+
+def _hm(t: dt.datetime) -> str:
+    return t.strftime("%H:%M")
+
+
+def duree_texte(heures: float) -> str:
+    """4.5 → « 4h30 » : la forme que planifier_intervention comprend."""
+    m = int(round(heures * 60))
+    return f"{m // 60}h{m % 60:02d}" if m % 60 else f"{m // 60}h"
+
+
+def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
+    """Ce que RHI poserait dans le planning InterFast pour une semaine.
+
+    Le chemin décidé le 29/09/2026 (docs/interfast.md) : des CASES dans le
+    planning, que l'on termine puis valide dans InterFast. Une case par CH
+    et par jour, avec toute l'équipe dessus, plutôt qu'une par personne :
+    autant de cases de moins à terminer et à valider, et le rapport
+    d'intervention garde de toute façon les heures de chaque technicien.
+
+    Pour chaque technicien, la case dit ce qu'il faudra saisir en la
+    terminant (« Date et heures pour … ») : début, fin, et la pause — qui
+    comprend le temps passé sur un autre CH entre les deux.
+
+    Une case n'est « prête » que si TOUS ceux qui ont pointé ce CH ce jour-là
+    ont leur RHI validé : une case partie incomplète se rattrape à la main.
+    Elle est « bloquée » si InterFast ne pourrait pas la recevoir : CH
+    inconnu d'InterFast, chantier sans client, aucun technicien relié à un
+    compte InterFast. Un technicien sans compte n'empêche pas la case : il
+    est nommé, pour être ajouté à la main."""
+    fin_sem = lundi + dt.timedelta(days=7)
+    valides = {r["personne"] for r in db.execute(
+        "SELECT personne FROM validations WHERE lundi=?", (lundi.isoformat(),))}
     gens = {r["nom"]: dict(r) for r in db.execute("SELECT * FROM personnes")}
     affaires = {r["ch"]: dict(r) for r in db.execute("SELECT * FROM affaires")}
-    lignes = {}
+    posees = {(r["ch"], r["jour"]): dict(r) for r in db.execute(
+        "SELECT * FROM cases_interfast WHERE jour >= ? AND jour < ?", (lundi.isoformat(), fin_sem.isoformat()))}
+    cases = {}
     for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND ch IS NOT NULL
                            AND fin IS NOT NULL AND debut >= ? AND debut < ? ORDER BY debut""",
-                        (lundi.isoformat(), fin.isoformat())):
+                        (lundi.isoformat(), fin_sem.isoformat())):
         p = dict(r)
-        if p["personne"] not in valides:
-            continue
-        cle = (p["personne"], p["ch"], p["debut"][:10])
-        l = lignes.setdefault(cle, {"personne": p["personne"], "ch": p["ch"], "jour": p["debut"][:10],
-                                    "heure": p["debut"][11:16], "heures": 0.0, "libelles": [],
-                                    "deja_envoye": False})
-        l["heures"] += _heures(p, a)
-        if p["libelle"] and p["libelle"] not in l["libelles"]:
-            l["libelles"].append(p["libelle"])
-        l["deja_envoye"] = l["deja_envoye"] or bool(p["interfast"])
+        jour = p["debut"][:10]
+        c = cases.setdefault((p["ch"], jour), {"ch": p["ch"], "jour": jour, "gens": {}, "libelles": []})
+        g = c["gens"].setdefault(p["personne"], {"personne": p["personne"], "debut": None, "fin": None,
+                                                 "heures": 0.0, "ids": [], "envoye": True, "douteux": False})
+        d, f = dt.datetime.fromisoformat(p["debut"]), dt.datetime.fromisoformat(p["fin"])
+        # Un pointage à cheval sur deux jours ou de plus de 12 h est un arrêt
+        # oublié ou mal rattrapé : il ne part pas tel quel dans une case.
+        g["douteux"] = g["douteux"] or f.date() != d.date() or f - d > dt.timedelta(hours=LONG_H)
+        g["debut"] = min(g["debut"] or d, d)
+        g["fin"] = max(g["fin"] or f, f)
+        g["heures"] += _heures(p, a)
+        g["ids"].append(p["id"])
+        g["envoye"] = g["envoye"] and bool(p["interfast"])
+        if p["libelle"] and p["libelle"] not in c["libelles"]:
+            c["libelles"].append(p["libelle"])
     sortie = []
-    for l in lignes.values():
-        g, aff = gens.get(l["personne"], {}), affaires.get(l["ch"], {})
+    for (ch, jour), c in cases.items():
+        aff = affaires.get(ch, {})
+        equipe = []
+        for g in sorted(c["gens"].values(), key=lambda x: x["debut"]):
+            fiche = gens.get(g["personne"], {})
+            amplitude = (g["fin"] - g["debut"]).total_seconds() / 3600
+            equipe.append({
+                "personne": g["personne"], "technicien": fiche.get("nom_complet") or g["personne"],
+                "compte": bool(fiche.get("interfast_user_id")), "valide": g["personne"] in valides,
+                "debut": _hm(g["debut"]), "fin": _hm(g["fin"]), "heures": round(g["heures"], 2),
+                "pause": duree_texte(max(0.0, amplitude - g["heures"])) if amplitude - g["heures"] >= 1 / 60 else "",
+                "envoye": g["envoye"], "ids": g["ids"], "douteux": g["douteux"]})
+        debut = min(dt.datetime.fromisoformat(f"{jour}T{e['debut']}") for e in equipe)
+        fin = max(dt.datetime.fromisoformat(f"{jour}T{e['fin']}") for e in equipe)
         blocages = []
-        if not g.get("interfast_user_id"):
-            blocages.append("personne sans compte InterFast")
         if not aff.get("interfast_id"):
             blocages.append("CH inconnu d'InterFast")
         elif not aff.get("client"):
             blocages.append("chantier sans client")
+        if not any(e["compte"] for e in equipe):
+            blocages.append("aucun technicien relié à InterFast")
+        douteux = [e["personne"] for e in equipe if e["douteux"]]
+        if douteux:
+            blocages.append(f"pointage de plus de {LONG_H} h ou sur deux jours ({', '.join(douteux)}) : à corriger")
+        attente = [e["personne"] for e in equipe if not e["valide"]]
+        pose = posees.get((ch, jour))
+        a_ajouter = [e["technicien"] for e in equipe if e["valide"] and not e["envoye"]] if pose else []
+        if pose:
+            etat = "à compléter" if a_ajouter else ("terminée" if pose["terminee"] else "posée")
+        elif attente:
+            etat = "en attente"
+        else:
+            etat = "bloquée" if blocages else "prête"
         sortie.append({
-            **l, "heures": round(l["heures"], 2),
-            "technicien": g.get("nom_complet") or l["personne"],
+            "id": f"{ch}|{jour}", "ch": ch, "jour": jour, "heure": _hm(debut), "fin": _hm(fin),
+            "duree": duree_texte((fin - debut).total_seconds() / 3600),
+            "heures": round(sum(e["heures"] for e in equipe), 2),
+            "equipe": equipe, "techniciens": [e["technicien"] for e in equipe if e["compte"]],
+            "sans_compte": [e["technicien"] for e in equipe if not e["compte"]],
+            "en_attente": attente, "a_ajouter": a_ajouter,
             "client": aff.get("client", ""), "chantier": aff.get("titre") or aff.get("chantier", ""),
-            "description": f"RHI · {l['ch']} · " + (" / ".join(l["libelles"]) or "pointage"),
-            "etat": "déjà envoyé" if l["deja_envoye"] else ("bloqué" if blocages else "prêt"),
-            "blocages": blocages})
-    sortie.sort(key=lambda x: (x["jour"], x["personne"], x["ch"]))
-    return {"lundi": lundi.isoformat(), "lignes": sortie,
-            "personnes_validees": sorted(valides),
-            "prets": sum(1 for x in sortie if x["etat"] == "prêt"),
-            "bloques": sum(1 for x in sortie if x["etat"] == "bloqué"),
-            "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prêt"), 2)}
+            "description": f"RHI · {ch} · " + (" / ".join(c["libelles"]) or "pointage"),
+            "ref": pose["ref"] if pose else "", "etat": etat, "blocages": blocages})
+    sortie.sort(key=lambda x: (x["jour"], x["heure"], x["ch"]))
+    compte = lambda e: sum(1 for x in sortie if x["etat"] == e)  # noqa: E731
+    return {"lundi": lundi.isoformat(), "cases": sortie, "personnes_validees": sorted(valides),
+            "pretes": compte("prête"), "bloquees": compte("bloquée"), "en_attente": compte("en attente"),
+            "posees": compte("posée") + compte("à compléter"), "terminees": compte("terminée"),
+            "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prête"), 2)}
+
+
+def case_posee(db, case: dict, ref: str) -> None:
+    """InterFast a créé la case : on garde sa référence, sur la case et sur
+    chaque pointage qu'elle porte — c'est ce qui interdit de l'envoyer deux
+    fois et de dévalider la semaine en silence."""
+    ids = [i for e in case["equipe"] if e["valide"] for i in e["ids"]]
+    with db:
+        db.execute("""INSERT INTO cases_interfast(ch, jour, ref, posee_le) VALUES (?,?,?,?)
+                      ON CONFLICT(ch, jour) DO UPDATE SET ref=excluded.ref, posee_le=excluded.posee_le""",
+                   (case["ch"], case["jour"], ref, _iso(maintenant())))
+        db.executemany("UPDATE pointages SET interfast=? WHERE id=?", [(ref, i) for i in ids])
+
+
+def cases_relues(db, lundi: dt.date, terminees: set) -> dict:
+    """Le planning InterFast relu : les cases de la semaine qui portent le ✅."""
+    fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
+    lignes = db.execute("SELECT ref FROM cases_interfast WHERE jour >= ? AND jour < ?",
+                        (lundi.isoformat(), fin_sem)).fetchall()
+    with db:
+        for r in lignes:
+            db.execute("UPDATE cases_interfast SET terminee=?, relue_le=? WHERE ref=?",
+                       (1 if r["ref"] in terminees else 0, _iso(maintenant()), r["ref"]))
+    refs = [r["ref"] for r in lignes]
+    return {"cases": len(refs), "terminees": sorted(x for x in refs if x in terminees),
+            "a_terminer": sorted(x for x in refs if x not in terminees)}
+
+
+def refs_semaine(db, personne: str, lundi: dt.date) -> list:
+    fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
+    return sorted({r[0] for r in db.execute(
+        """SELECT interfast FROM pointages WHERE personne=? AND interfast IS NOT NULL
+           AND debut >= ? AND debut < ?""", (personne, lundi.isoformat(), fin_sem))})
 
 
 # ═══════════════════════ SAUVEGARDE ═══════════════════════

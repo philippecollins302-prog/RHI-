@@ -53,10 +53,10 @@ questions. Une ligne par réponse suffit.
     serrurerie ont un coût horaire à 0 € : sans lui, aucune rentabilité ne
     se calcule, ni dans InterFast ni dans RHI. Qui peut le renseigner (coût
     chargé par personne, ou un taux moyen atelier / pose) ?
-    Et pour faire tomber les heures dans InterFast : son API ne permet pas
-    d'écrire des heures directement. Le chemin envisagé (une intervention
-    par personne, par chantier et par jour, avec la durée réelle) est décrit
-    dans `docs/interfast.md` ; on l'essaiera d'abord sur une affaire de test.
+    Et pour faire tomber les heures dans InterFast : RHI posera une case
+    par chantier et par jour dans le planning, avec l'équipe ; il faudra la
+    terminer puis valider la feuille de temps dans InterFast (l'API ne sait
+    pas le faire). Qui s'en charge, et quand ? (`docs/interfast.md`)
 
 ### Les comptes InterFast (relevé du 29/09/2026)
 11. Trois opérateurs présents dans ton planning atelier ont leur compte

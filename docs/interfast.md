@@ -80,13 +80,40 @@ validation du RHI par le bureau : une écriture par personne, par CH et par
 jour, avec la référence gardée dans `pointages.interfast` pour ne jamais
 envoyer deux fois.
 
-**L'aperçu est en place** (bureau → *Vers InterFast*) : pour chaque semaine
-validée, la liste exacte des interventions que le chemin A créerait — une par
-personne, par CH et par jour, à l'heure du premier pointage, durée réelle,
-technicien et client InterFast — avec ce qui bloquerait (personne sans
-compte, CH inconnu d'InterFast, chantier sans client). Rien n'est écrit.
-Brancher A, ce sera appeler `planifier_intervention` puis `confirmer_action`
-pour chaque ligne « prête » et garder la référence dans `pointages.interfast`.
+**En place (29/09/2026), écriture toujours coupée** — bureau → *Vers
+InterFast* :
+
+- une **case par CH et par jour**, avec toute l'équipe qui a pointé ce CH ce
+  jour-là (`base.envois`) : de la première arrivée au dernier départ,
+  techniciens par leur nom InterFast ;
+- sous chaque case, **ce qu'il faudra saisir en la terminant** dans
+  InterFast, par technicien : début, fin, pause (qui comprend le temps passé
+  sur un autre CH entre deux morceaux) ;
+- une case n'est **prête** que si tous ceux qui l'ont pointée ont leur RHI
+  **validé**. Elle est **bloquée** dans quatre cas : CH inconnu d'InterFast,
+  chantier sans client, aucun technicien relié, ou un pointage de plus de
+  12 h / à cheval sur deux jours. Un technicien sans compte ne bloque pas :
+  il est nommé, pour être ajouté à la main ;
+- **Poser** (`POST /api/interfast/envois`) : `planifier_intervention` puis
+  `confirmer_action`, une case à la fois. La référence IN… est gardée sur la
+  case (`cases_interfast`) et sur chaque pointage, donc jamais deux envois.
+  Un refus (« ❌ ») s'arrête avant la confirmation. Une confirmation sans
+  référence est marquée « À VÉRIFIER » et n'est pas renvoyée. Répond 403 tant
+  que `ECRITURE = False` ;
+- **Relire** (`POST /api/interfast/suivi`) : le ✅ du planning InterFast
+  (`consulter_planning`, technicien par technicien à cause de la coupure à
+  4 000 caractères) marque les cases terminées ;
+- une semaine dont une case est posée **ne se dévalide plus** (409) : une
+  correction faite ensuite n'arriverait jamais dans InterFast. On corrige
+  d'abord la case dans InterFast.
+
+Reste l'essai sur une affaire de test, avec Philippe, avant `ECRITURE = True`.
+Trois choses à y vérifier :
+
+1. la case se crée sur le bon chantier, avec toute l'équipe ;
+2. elle se termine avec les heures de chacun ;
+3. après validation de la feuille de temps, la marge réelle du chantier
+   bouge.
 
 ### Comment InterFast le fait « en classique » (centre d'aide, 29/09/2026)
 

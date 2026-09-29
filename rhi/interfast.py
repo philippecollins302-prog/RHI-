@@ -262,9 +262,68 @@ async def devis_de(ch: str, transport=None) -> dict:
             "refs": [d["ref"] for d in vendus]}
 
 
-async def envoyer_heures(*_args, **_kw):
+class EcritureCoupee(InterFastIndisponible):
+    """ECRITURE = False : rien ne part, et on le dit."""
+
+
+class CaseSansReference(InterFastIndisponible):
+    """InterFast a confirmé sans rendre de référence IN… : la case existe
+    peut-être. On ne la renvoie pas (doublon) ; on la fait vérifier."""
+
+
+_REF = re.compile(r"\bIN\d{4,6}\b")
+_REFUS = ("❌", "Aucune action")
+
+
+async def poser_case(case: dict, transport=None) -> str:
+    """Pose une case dans le planning InterFast et rend sa référence (IN…).
+
+    Les deux temps du MCP : planifier_intervention prépare et récapitule,
+    confirmer_action crée. Un refus (« ❌ », « Aucune action ») s'arrête là,
+    sans réessayer avec d'autres paramètres : le MCP le demande, et une
+    case posée au mauvais endroit fausse un point d'affaire en silence."""
     if not ECRITURE:
-        raise InterFastIndisponible(
-            "Écriture InterFast coupée (rhi/interfast.py, ECRITURE = False) : "
-            "l'API n'écrit pas d'heures ; le chemin reste à décider (docs/interfast.md).")
-    raise NotImplementedError("À écrire une fois l'outil InterFast connu")
+        raise EcritureCoupee(
+            "Écriture InterFast coupée (rhi/interfast.py, ECRITURE = False) : à rebrancher "
+            "après l'essai sur une affaire de test (docs/interfast.md).")
+    args = {"client": case["client"], "date": case["jour"], "heure": case["heure"],
+            "duree": case["duree"], "techniciens": case["techniciens"], "description": case["description"]}
+    if case.get("chantier"):
+        args["chantier"] = case["chantier"]
+    recap = await outil("planifier_intervention", args, transport)
+    if any(x in recap for x in _REFUS):
+        raise InterFastIndisponible(f"InterFast refuse la case : {recap[:300]}")
+    reponse = await outil("confirmer_action", {"confirmation": True}, transport)
+    if any(x in reponse for x in _REFUS):
+        raise InterFastIndisponible(f"InterFast refuse la confirmation : {reponse[:300]}")
+    m = _REF.search(reponse)
+    if not m:
+        raise CaseSansReference(f"Confirmée sans référence : {reponse[:300]}")
+    return m.group(0)
+
+
+# « 📋 08:30-10:15 ✅IN00047 2NDE VM AUTOMATISME | CLIENT … | Stéphane »
+# — relevé le 29/09/2026 : le ✅ colle la référence d'une intervention terminée.
+_TERMINEE = re.compile(r"✅\s*(IN\d{4,6})")
+
+
+def lire_terminees(texte: str) -> set:
+    return set(_TERMINEE.findall(texte))
+
+
+async def terminees(lundi, techniciens: list, transport=None) -> dict:
+    """Les interventions terminées (✅) d'une semaine, lues au planning.
+
+    Par technicien, en série : une semaine entière dépasse les 4 000
+    caractères du MCP (34 événements le 29/09/2026, coupés au vendredi).
+    Une réponse encore tronquée est signalée : une case absente de la
+    lecture n'est pas une case non terminée."""
+    iso = lundi.isocalendar()
+    semaine = f"{iso[0]}-W{iso[1]:02d}"
+    vues, tronques = set(), []
+    for t in techniciens:
+        texte = await outil("consulter_planning", {"semaine": semaine, "technicien": t}, transport)
+        if "(tronqué)" in texte:
+            tronques.append(t)
+        vues |= lire_terminees(texte)
+    return {"terminees": vues, "tronques": tronques}

@@ -90,8 +90,12 @@ pas). Les constats sont gardés par jour : « 3ᵉ analyse d'affilée ».
   CH00xxx ») : RHI les relit, en lecture seule (`POST /api/interfast/chantiers`,
   bouton au bureau). Les 36 CH des plannings y étaient tous (29/09/2026).
 - L'API **n'écrit pas d'heures** : les timesheets ne se lisent qu'attachées à
-  une intervention. `ECRITURE = False` tant que le chemin (A, B ou C dans
-  docs/interfast.md) n'est pas décidé et essayé sur une affaire de test.
+  une intervention. Chemin décidé (Philippe, 29/09/2026) : RHI **pose des
+  cases dans le planning** (une par CH et par jour, toute l'équipe dessus) ;
+  on les **termine** puis on **valide la feuille de temps** dans InterFast —
+  l'API ne sait faire ni l'un ni l'autre. `ECRITURE = False` tant que ce
+  n'est pas essayé sur une affaire de test. Une semaine posée ne se dévalide
+  plus.
 - Le MCP coupe ses réponses à ~4 000 caractères, ignore les paramètres
   d'`appeler_api` et se trompe sous les appels parallèles : les comptes se
   lisent un par un, en série (docs/interfast.md).

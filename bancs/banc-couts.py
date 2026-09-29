@@ -165,26 +165,115 @@ c.delete("/api/validations?personne=PAUL&semaine=2026-09-28")
 verif(c.patch(f"/api/pointages/{pid}", json={"fin": "2026-09-28T12:00"}).status_code == 200,
       "dévalidée : corrigeable de nouveau")
 
-# ── Vers InterFast, à blanc ──
+# ── Vers InterFast : une case par CH et par jour, toute l'équipe dessus ──
 c.post("/api/validations", json={"personne": "PAUL", "semaine": "2026-09-28", "qui": "Alexis"})
 e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
-verif(e["ecriture"] is False and e["personnes_validees"] == ["PAUL"], "à blanc, validés seulement")
-verif({x["personne"] for x in e["lignes"]} == {"PAUL"}, "Jean n'est pas validé : rien pour lui")
-l28 = [x for x in e["lignes"] if x["jour"] == "2026-09-28"]
-verif(len(l28) == 1 and l28[0]["ch"] == "CH00901" and l28[0]["heure"] == "07:00",
-      f"une ligne par personne, CH et jour, à l'heure du premier pointage : {l28}")
-verif(l28[0]["etat"] == "bloqué" and "CH inconnu d'InterFast" in l28[0]["blocages"],
-      "CH jamais relu dans InterFast : bloqué, et on dit pourquoi")
-verif(all("RHI · CH" in x["description"] for x in e["lignes"]), "description reconnaissable dans InterFast")
-# Jean est relié à InterFast ; CH00901 y devient connu, avec son client : prêt.
+verif(e["ecriture"] is False and e["personnes_validees"] == ["PAUL"], "à blanc")
+cases = {x["id"]: x for x in e["cases"]}
+c28 = cases["CH00901|2026-09-28"]
+verif([g["personne"] for g in c28["equipe"]] == ["PAUL", "JEAN", "LUC", "ZOE"],
+      f"une seule case pour les quatre qui ont pointé CH00901 le 28 : {c28['equipe']}")
+verif(c28["etat"] == "en attente" and c28["en_attente"] == ["JEAN", "LUC", "ZOE"],
+      "la case attend que toute l'équipe soit validée : une case partie incomplète se rattrape à la main")
+verif("CH inconnu d'InterFast" in c28["blocages"], "et on dit déjà ce qui la bloquerait")
+c30 = cases["CH00901|2026-09-30"]
+verif(any("plus de 12 h" in b and "PAUL" in b for b in c30["blocages"]),
+      f"un pointage de plusieurs jours ne part pas dans une case : {c30['blocages']}")
 base.importer_chantiers(base.connexion(appli.app.state.chemin_base),
                         [{"id": 777, "ch": "CH00901", "titre": "Résidence des Pins", "client": "BAILLEUR SUD",
                           "statut": "En cours"}])
-c.post("/api/validations", json={"personne": "JEAN", "semaine": "2026-09-28", "qui": "Alexis"})
+for qui in ("JEAN", "LUC", "ZOE"):
+    c.post("/api/validations", json={"personne": qui, "semaine": "2026-09-28", "qui": "Alexis"})
 e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
-jean = [x for x in e["lignes"] if x["personne"] == "JEAN" and x["jour"] == "2026-09-28"][0]
-verif(jean["etat"] == "prêt" and jean["technicien"] == "Jean Durand" and jean["client"] == "BAILLEUR SUD"
-      and jean["heures"] == 4.0, f"prêt, avec tout ce qu'InterFast demande : {jean}")
-verif(e["heures_pretes"] >= 4.0 and e["prets"] >= 1, "le total prêt est compté")
+c28 = {x["id"]: x for x in e["cases"]}["CH00901|2026-09-28"]
+verif(c28["etat"] == "prête" and c28["client"] == "BAILLEUR SUD" and c28["chantier"] == "Résidence des Pins",
+      f"toute l'équipe validée, CH connu : prête — {c28['etat']} {c28['blocages']}")
+verif((c28["heure"], c28["fin"], c28["duree"], c28["heures"]) == ("07:00", "12:00", "5h", 17.0),
+      f"la case couvre l'équipe de 7 h à 12 h ; 17 h de travail : {c28['heure']} {c28['fin']} {c28['duree']}")
+verif(c28["techniciens"] == ["Paul Martin", "Jean Durand", "Zoe Aubert"] and c28["sans_compte"] == ["LUC"],
+      "techniciens InterFast par leur nom complet ; celui sans compte est nommé, pas oublié")
+verif(e["pretes"] == 1 and e["heures_pretes"] == 17.0, "le total prêt est compté")
+verif(c.post("/api/interfast/envois", json={"semaine": "2026-09-28"}).status_code == 403,
+      "écriture coupée : l'envoi est refusé, rien n'est tenté")
+
+# La pause : le temps passé ailleurs entre deux morceaux du même CH.
+for d_, f_, ch_ in (("07:00", "09:00", "CH00901"), ("09:00", "10:00", "CH00902"), ("10:00", "12:30", "CH00901")):
+    c.post("/api/pointages", json={"personne": "JEAN", "ch": ch_, "debut": f"2026-10-06T{d_}", "fin": f"2026-10-06T{f_}"})
+c.post("/api/validations", json={"personne": "JEAN", "semaine": "2026-10-05", "qui": "Alexis"})
+e = c.get("/api/interfast/envois?semaine=2026-10-05").json()
+jean = {x["id"]: x for x in e["cases"]}["CH00901|2026-10-06"]["equipe"][0]
+verif((jean["debut"], jean["fin"], jean["pause"], jean["heures"]) == ("07:00", "12:30", "1h", 4.5),
+      f"ce qu'il faudra saisir en terminant la case : 7:00 → 12:30, pause 1h, 4h30 : {jean}")
+verif(base.duree_texte(4.5) == "4h30" and base.duree_texte(2) == "2h" and base.duree_texte(0.25) == "0h15",
+      "durées au format d'InterFast")
+
+# ── Écriture branchée, sur un faux InterFast ──
+from rhi import interfast  # noqa: E402
+ecrits = []
+reponses = {"planifier_intervention": "📋 Récapitulatif … Confirmez avec confirmer_action.",
+            "confirmer_action": "✅ Intervention IN00321 planifiée le 28/09/2026."}
+
+
+def mcp_ecriture(req: httpx.Request) -> httpx.Response:
+    corps = json.loads(req.content)
+    nom, args = corps["params"]["name"], corps["params"]["arguments"]
+    ecrits.append((nom, args))
+    if nom == "consulter_planning":
+        texte = ("📅 **Planning**\n  📋 07:00-12:00 ✅IN00321 RHI · CH00901 | BAILLEUR SUD | Paul\n"
+                 "  📋 07:00-08:00 IN00999 autre | X | Paul")
+    else:
+        texte = reponses[nom]
+    return httpx.Response(200, text="data: " + json.dumps({"result": {"content": [{"type": "text", "text": texte}]}}))
+
+
+appli.app.state.transport_interfast = httpx.MockTransport(mcp_ecriture)
+interfast.ECRITURE = True
+try:
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28"})
+    verif(r.status_code == 200 and r.json()["posees"] == [{"id": "CH00901|2026-09-28", "ref": "IN00321"}],
+          f"la case prête est posée et sa référence rendue : {r.text}")
+    verif([n for n, _ in ecrits] == ["planifier_intervention", "confirmer_action"], f"deux temps : {ecrits}")
+    plan = ecrits[0][1]
+    verif(plan == {"client": "BAILLEUR SUD", "chantier": "Résidence des Pins", "date": "2026-09-28",
+                   "heure": "07:00", "duree": "5h", "techniciens": ["Paul Martin", "Jean Durand", "Zoe Aubert"],
+                   "description": "RHI · CH00901 · pointage"}, f"ce qui part : {plan}")
+    verif(ecrits[1][1] == {"confirmation": True}, "confirmation explicite")
+    e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
+    c28 = {x["id"]: x for x in e["cases"]}["CH00901|2026-09-28"]
+    verif(c28["etat"] == "posée" and c28["ref"] == "IN00321", "la case est posée, avec sa référence")
+    ecrits.clear()
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28"})
+    verif(r.json()["posees"] == [] and ecrits == [], "jamais deux fois la même case")
+    r = c.delete("/api/validations?personne=ZOE&semaine=2026-09-28")
+    verif(r.status_code == 409 and "IN00321" in r.json()["detail"],
+          "on ne dévalide pas une semaine déjà posée : la correction n'arriverait jamais dans InterFast")
+    # La relecture du planning : le ✅ dit que la case est terminée.
+    r = c.post("/api/interfast/suivi?semaine=2026-09-28")
+    verif(r.status_code == 200 and r.json()["terminees"] == ["IN00321"], f"relue terminée : {r.text}")
+    semaines = {a["semaine"] for n, a in ecrits if n == "consulter_planning"}
+    verif(semaines == {"2026-W40"} and {a["technicien"] for n, a in ecrits if n == "consulter_planning"}
+          == {"Paul Martin", "Jean Durand", "Zoe Aubert"}, "lue par technicien, semaine ISO")
+    c28 = {x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-09-28").json()["cases"]}["CH00901|2026-09-28"]
+    verif(c28["etat"] == "terminée", "l'onglet le montre")
+    # Un refus d'InterFast s'arrête au premier temps, sans confirmer.
+    reponses["planifier_intervention"] = "❌ Chantier introuvable pour ce client."
+    base.importer_chantiers(base.connexion(appli.app.state.chemin_base),
+                            [{"id": 778, "ch": "CH00902", "titre": "Port", "client": "COMMUNE DU PORT",
+                              "statut": "En cours"}])
+    ecrits.clear()
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
+    verif(r.json()["posees"] == [] and "introuvable" in r.json()["echecs"][0]["erreur"], f"refus rapporté : {r.text}")
+    verif([n for n, _ in ecrits] == ["planifier_intervention"], "pas de confirmation après un refus")
+    # Confirmée sans référence : marquée À VÉRIFIER, jamais renvoyée.
+    reponses["planifier_intervention"] = "Récapitulatif"
+    reponses["confirmer_action"] = "C'est fait."
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
+    verif(r.json()["echecs"] and "sans référence" in r.json()["echecs"][0]["erreur"], "sans référence : dit")
+    ecrits.clear()
+    c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
+    verif(ecrits == [], "une case peut-être créée n'est pas renvoyée (pas de doublon)")
+finally:
+    interfast.ECRITURE = False
+verif(interfast.terminees.__doc__ and interfast.lire_terminees("✅ Occupé | X") == set(), "« ✅ Occupé » n'est pas une case")
 
 fin("banc-couts")
