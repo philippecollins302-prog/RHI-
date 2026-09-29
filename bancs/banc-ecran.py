@@ -6,7 +6,7 @@ from bancs.outils import fin, verif
 
 PUB = Path(__file__).resolve().parent.parent / "public"
 
-for page in ("index.html", "bureau.html", "ecran.html"):
+for page in ("index.html", "bureau.html", "ecran.html"):  # mode-emploi.html : page sans script
     html = (PUB / page).read_text()
     for src in re.findall(r'(?:src|href)="([^"#:]+)"', html):
         verif((PUB / src).exists(), f"{page} charge {src}, absent du disque")
@@ -50,5 +50,16 @@ for src in re.findall(r'(?:src|href)="([^"#:]+)"', index):
 verif("/" in coquille, "sw.js : la page elle-même est dans la coquille")
 verif("startsWith('/api/')" in sw, "sw.js : l'API ne passe jamais par le cache")
 verif("url.pathname === '/'" in sw, "sw.js : hors ligne, seule la tablette retombe sur la page de la tablette")
+
+# Le mode d'emploi ne promet que des gestes qui existent (règle d'Ali Baba).
+guide = (PUB / "mode-emploi.html").read_text()
+for onglet in ("Plannings", "À vérifier", "RHI de la semaine", "Marche en avant", "Point d'affaire",
+               "Vers InterFast"):
+    verif(onglet in guide and f">{onglet}<" in (PUB / "bureau.html").read_text(),
+          f"mode d'emploi : l'onglet « {onglet} » existe au bureau")
+for geste in ("J'arrête", "Valider la semaine", "Télécharger toute la base", "Hors affaire"):
+    verif(geste in guide and any(geste in (PUB / f).read_text() for f in ("terrain.js", "bureau.js")),
+          f"mode d'emploi : « {geste} » existe à l'écran")
+verif("Rien n'y est envoyé" in guide, "le guide dit que l'envoi vers InterFast n'est pas branché")
 
 fin("banc-ecran")

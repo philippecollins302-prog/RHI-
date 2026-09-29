@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RHI · Mode d'emploi</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  main { max-width: 820px; }
+  h2 { color: var(--texte); font-size: 22px; text-transform: none; letter-spacing: 0; margin-top: 32px; }
+  ol li, ul li { margin-bottom: 8px; }
+  .geste { font-size: 22px; font-weight: 700; }
+  @media print { header { background: none; color: #000; } a { color: #000; } }
+</style>
+</head>
+<body>
+<header><h1>RHI · Mode d'emploi</h1></header>
+<main>
+
+<p><strong>RHI, c'est le Relevé Hebdomadaire Individuel.</strong> Chaque heure passée sur un
+chantier tombe sur son numéro d'affaire (le CH). C'est ce qui permet enfin de savoir ce qu'une
+affaire a coûté en main-d'œuvre — sans feuille d'heures à remplir le lundi.</p>
+
+<h2>À l'atelier (la tablette sur pied)</h2>
+<ol>
+  <li class="geste">Je touche mon nom.</li>
+  <li class="geste">Je touche le chantier sur lequel je démarre.</li>
+  <li>Mes chantiers du jour, pris dans le planning, sont en haut. Si le mien n'y est pas, je le
+    cherche juste en dessous (nom du chantier ou CH). Un CH qui n'existe nulle part est accepté :
+    le bureau vérifiera.</li>
+  <li>Je passe à un autre chantier ? <strong>Je touche l'autre chantier</strong> : le premier
+    s'arrête tout seul.</li>
+  <li>Pas sur un chantier (attente matière, rangement, panne…) ? Je touche le motif dans
+    « Hors affaire » : ce temps-là compte aussi.</li>
+  <li class="geste">À la pause ou le soir : « J'arrête ».</li>
+</ol>
+<p>La tablette revient toute seule à la liste des noms au bout d'une minute : le suivant ne pointe
+pas sous mon nom.</p>
+
+<h2>En pose (le téléphone du chef d'équipe)</h2>
+<ol>
+  <li>Le chef touche <strong>son nom et celui de son binôme</strong>, puis « C'est nous ».
+    Le téléphone s'en souvient pour les jours suivants.</li>
+  <li>Il touche le chantier : le pointage démarre <strong>pour les deux</strong>.</li>
+  <li>« J'arrête » arrête pour les deux.</li>
+</ol>
+
+<h2>Sans réseau</h2>
+<p>On pointe quand même. Un bandeau orange dit « Hors ligne · N gestes en attente » : ils partent
+tout seuls au retour du réseau, <strong>à l'heure où ils ont été faits</strong>. Au-delà de trois
+jours sans réseau, le bureau saisit à la main.</p>
+
+<h2>Oublié d'arrêter ? Pointé sur le mauvais chantier ?</h2>
+<p>Pas de panique, rien n'est bloqué : on le dit au bureau, qui corrige. Un pointage resté ouvert
+plus de 10 heures est repéré tout seul.</p>
+
+<h2>Au bureau, le lundi matin</h2>
+<ol>
+  <li><strong>Plannings</strong> : déposer le planning ATE, le planning POSE et, pour la marche en
+    avant, le planning BET.</li>
+  <li><strong>À vérifier</strong> : corriger les arrêts oubliés, les CH tapés à la main, les motifs
+    « autre ».</li>
+  <li><strong>RHI de la semaine</strong> : relire chaque relevé, puis « Valider la semaine ». Une
+    semaine validée ne se corrige plus sans être dévalidée. L'export Excel reprend toute l'équipe.</li>
+  <li><strong>Marche en avant</strong> : les poses des quatre semaines face à leurs études, leur fab
+    et leur traitement. Une fab n'est comptée faite que si elle est datée d'avant aujourd'hui.</li>
+  <li><strong>Point d'affaire</strong> : heures réelles, prévu fab, coût de main-d'œuvre, vendu HT
+    (devis signés dont le titre porte le CH).</li>
+  <li><strong>Vers InterFast</strong> : ce qui partirait vers InterFast pour les semaines validées.
+    <em>Rien n'y est envoyé pour l'instant</em> : l'envoi n'est pas encore branché.</li>
+  <li>Une fois par semaine : <strong>Plannings → Télécharger toute la base</strong>, à garder
+    ailleurs.</li>
+</ol>
+
+<h2>L'écran du mur</h2>
+<p>Ouvrir <strong>/ecran</strong> en plein écran. Il alterne toutes les 15 secondes l'atelier du
+jour (qui pointe quoi), la pose de la semaine et les envois en traitement, et se met à jour tout
+seul.</p>
+
+</main>
+</body>
+</html>

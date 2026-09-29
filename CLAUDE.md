@@ -28,6 +28,9 @@ est faite.
   (`ECRITURE = False`).
 - `public/index.html` + `terrain.js` — la tablette de l'atelier / le
   téléphone du chef d'équipe de pose.
+- `public/mode-emploi.html` — le guide, pour les gars et pour le bureau. **Ne
+  jamais y promettre un geste qui n'existe pas** : le banc d'écran vérifie que
+  chaque onglet et chaque bouton cité existe.
 - `public/bureau.html` + `bureau.js` — RHI de la semaine (et sa validation),
   à vérifier, point d'affaire (heures et coût de main-d'œuvre), en ce
   moment, personnes (compte InterFast, coût horaire), dépôt des plannings.

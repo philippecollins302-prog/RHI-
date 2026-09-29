@@ -92,7 +92,7 @@ async function accueil() {
     </div>
     ${pose ? `<p><button class="valider" id="valider" style="width:100%">C'est nous → nos chantiers</button></p>` : ''}
     <p class="doux" style="margin-top:32px">Appareil ${esc(APPAREIL)} · mode ${esc(etat.mode)} ·
-      <a href="#" id="remode">changer</a></p>`;
+      <a href="#" id="remode">changer</a> · <a href="/mode-emploi.html">mode d'emploi</a></p>`;
   document.querySelectorAll('[data-nom]').forEach((b) => b.onclick = () => {
     const nom = b.dataset.nom;
     if (!pose) { ouvrir([nom]); return; }
