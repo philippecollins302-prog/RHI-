@@ -6,14 +6,15 @@ from bancs.outils import fin, verif
 
 PUB = Path(__file__).resolve().parent.parent / "public"
 
-for page in ("index.html", "bureau.html"):
+for page in ("index.html", "bureau.html", "ecran.html"):
     html = (PUB / page).read_text()
     for src in re.findall(r'(?:src|href)="([^"#:]+)"', html):
         verif((PUB / src).exists(), f"{page} charge {src}, absent du disque")
-    verif(html.index("commun.js") < html.index("terrain.js" if page == "index.html" else "bureau.js"),
+    verif(html.index("commun.js") < html.index({"index.html": "terrain.js", "bureau.html": "bureau.js",
+                                               "ecran.html": "ecran.js"}[page]),
           f"{page} : commun.js d'abord (il définit $, esc, api)")
 
-for js in ("terrain.js", "bureau.js"):
+for js in ("terrain.js", "bureau.js", "ecran.js"):
     code = (PUB / js).read_text()
     # Toute interpolation ${…} dans un gabarit HTML doit être échappée, sauf
     # les nombres et les fragments déjà construits (listes .map().join()).

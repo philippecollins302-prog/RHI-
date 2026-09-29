@@ -84,6 +84,20 @@ a(7, 30)
 c.post("/api/demarrer", json={"personnes": ["LUC", "MARC"], "ch": "CH00901"})
 verif(len(c.get("/api/en-cours").json()["pointages"]) == 2, "deux personnes, un geste")
 
+# ── L'écran du mur ──
+e = c.get("/api/ecran?jour=2026-09-28").json()
+at = {p["nom"]: p for p in e["atelier"]}
+verif(set(at) == {"JEAN", "PAUL"}, "l'atelier seulement sur la vue atelier")
+verif(at["PAUL"]["prevu"][0]["ch"] == "CH00901", "le prévu du jour de Paul")
+verif(at["PAUL"]["en_cours"] is None, "Paul est arrêté à 16 h")
+verif([j["jour"] for j in e["pose"]] == ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"],
+      "la pose, du lundi au vendredi")
+lundi_pose = e["pose"][0]["equipes"]
+verif(len(lundi_pose) == 1 and lundi_pose[0]["personnes"] == ["LUC", "MARC"] and lundi_pose[0]["ch"] == ["CH00901"],
+      f"une équipe, deux noms, un CH : {lundi_pose}")
+verif(e["pose"][2]["equipes"] == [], "mercredi : CP, personne en pose")
+verif(any(p["en_cours"] for p in e["atelier"]) is False, "")
+
 # ── Mardi soir, le bureau lit le RHI ──
 a(18, 0, jour=29)
 rhi = c.get("/api/rhi?personne=PAUL&semaine=2026-09-30").json()

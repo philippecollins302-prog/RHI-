@@ -152,6 +152,12 @@ def api_arreter(a: Arret, c=Depends(db)):
     return {"arretes": n}
 
 
+@app.get("/api/ecran", dependencies=[Depends(acces_terrain)])
+def api_ecran(jour: str | None = None, c=Depends(db)):
+    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    return base.ecran(c, j) | {"maintenant_ms": int(time.time() * 1000)}
+
+
 # ═══════════════════════ BUREAU ═══════════════════════
 
 @app.post("/api/plannings", dependencies=[Depends(acces_bureau)])
@@ -353,6 +359,11 @@ def page_terrain():
 @app.get("/bureau")
 def page_bureau():
     return FileResponse(PUBLIC / "bureau.html")
+
+
+@app.get("/ecran")
+def page_ecran():
+    return FileResponse(PUBLIC / "ecran.html")
 
 
 app.mount("/", StaticFiles(directory=PUBLIC), name="public")

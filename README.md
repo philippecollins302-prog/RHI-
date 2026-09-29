@@ -8,6 +8,8 @@ pour que le point d'affaire et la rentabilité se lisent enfin sans estimation.
   chantier (ceux du planning du jour en tête), le chrono tourne. Toucher un
   autre chantier arrête le premier. « J'arrête » en fin de tâche.
 - **Pose** : le téléphone du chef d'équipe, qui pointe pour lui et son binôme.
+- **Écran de l'atelier** (`/ecran`) : sur un écran au mur, alterne toutes les
+  15 s l'atelier du jour (prévu + qui pointe quoi) et la pose de la semaine.
 - **Bureau** (`/bureau`) : le RHI de chacun le lundi matin (jour × CH, export
   Excel), les pointages douteux à corriger, le point d'affaire (réel face au
   prévu du plan de charge), qui pointe en ce moment, le dépôt des plannings.

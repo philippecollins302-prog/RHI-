@@ -431,6 +431,37 @@ def menu(db, personne: str, jour: dt.date) -> dict:
             "motifs": [{"code": k, "libelle": v} for k, v in MOTIFS.items()]}
 
 
+def ecran(db, jour: dt.date) -> dict:
+    """Ce que l'écran de l'atelier affiche : aujourd'hui à l'atelier, la
+    semaine de la pose. Lecture seule, tiré du planning importé et des
+    pointages en cours."""
+    tourne = {p["personne"]: p for p in en_cours(db)}
+    atelier = []
+    for p in personnes(db, "atelier"):
+        prevu = [dict(r) for r in db.execute(
+            """SELECT p.ch, p.libelle, COALESCE(a.chantier,'') AS chantier FROM planning p
+               LEFT JOIN affaires a ON a.ch = p.ch
+               WHERE p.personne=? AND p.jour=? AND p.origine='atelier' ORDER BY p.rowid""",
+            (p["nom"], jour.isoformat()))]
+        t = tourne.get(p["nom"])
+        atelier.append({"nom": p["nom"], "prevu": prevu,
+                        "en_cours": {k: t[k] for k in ("ch", "motif", "chantier", "debut")} if t else None})
+    lundi = jour - dt.timedelta(days=jour.weekday())
+    pose = []
+    for i in range(5):
+        j = lundi + dt.timedelta(days=i)
+        equipes = {}
+        for r in db.execute("""SELECT personne, libelle, ch FROM planning
+                               WHERE origine='pose' AND jour=? ORDER BY rowid""", (j.isoformat(),)):
+            e = equipes.setdefault(r["libelle"], {"libelle": r["libelle"], "ch": [], "personnes": []})
+            if r["ch"] and r["ch"] not in e["ch"]:
+                e["ch"].append(r["ch"])
+            if r["personne"] not in e["personnes"]:
+                e["personnes"].append(r["personne"])
+        pose.append({"jour": j.isoformat(), "equipes": list(equipes.values())})
+    return {"jour": jour.isoformat(), "atelier": atelier, "pose": pose}
+
+
 # ═══════════════════════ POINTAGE ═══════════════════════
 
 def en_cours(db, personne=None) -> list:

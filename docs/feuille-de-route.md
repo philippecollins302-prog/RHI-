@@ -28,7 +28,8 @@ Les plannings MEN n'ont pas la même forme (onglet par année côté pose, pas
 de bande « N° AFFAIRE ») : lecteurs dédiés, clé `INTERFAST_ALFA`.
 
 ## Plus tard
-- Écran d'atelier qui fait défiler pose / traitement (demande d'Alexis).
+- ~~Écran d'atelier qui fait défiler atelier / pose~~ — fait (`/ecran`).
+  Reste le planning TRAITEMENT (départs en traitement de surface) à y ajouter.
 - Analyse de la marche en avant BET → fab → traitement → pose, chaque lundi
   à 7 h (reprise de l'agent de synthèse d'Alexis, en code et avec bancs :
   une date de fabrication future n'est jamais « réalisée »).
