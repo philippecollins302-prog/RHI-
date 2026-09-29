@@ -63,3 +63,18 @@ tr.total td { font-weight: 700; }
   margin-bottom: 12px; }
 .doux { color: var(--doux); }
 .reseau { padding: 10px 16px; background: var(--ambre-clair); color: var(--ambre); font-weight: 600; }
+
+/* Le RHI imprimé : une page par personne, rien d'autre sur la feuille. */
+#impression { display: none; }
+@media print {
+  body.imprime > *:not(#impression) { display: none !important; }
+  body.imprime #impression { display: block; }
+  .feuille { page-break-after: always; font-size: 11pt; color: #000; }
+  .feuille h1 { font-size: 16pt; margin: 0 0 4pt; }
+  .feuille h2 { font-size: 12pt; margin: 12pt 0 4pt; }
+  .feuille table { width: 100%; border-collapse: collapse; }
+  .feuille th, .feuille td { border: 1px solid #999; padding: 2pt 4pt; }
+  .feuille .n { text-align: right; }
+  .signatures { display: flex; gap: 24pt; margin-top: 24pt; }
+  .signatures div { flex: 1; height: 60pt; border: 1px solid #999; padding: 4pt; }
+}

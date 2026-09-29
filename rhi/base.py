@@ -734,6 +734,7 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
         l["total"] += h
         p["heures"] = round(h, 2)
         p["alertes"] = _alertes(p, a)
+        p["motif_libelle"] = MOTIFS.get(p["motif"] or "", "")
         detail.append(p)
     rangees = sorted(lignes.values(), key=lambda l: (l["ch"] is None, -l["total"]))
     for l in rangees:
@@ -747,6 +748,59 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
             "par_jour": par_jour, "total": total, "hors_affaire": hors,
             "pointages": detail,
             "a_verifier": sum(1 for p in detail if p["alertes"])}
+
+
+def oublis(db, lundi: dt.date, a: dt.datetime) -> list:
+    """Les journées au planning où la personne n'a RIEN pointé.
+
+    Le lundi matin, c'est le premier trou à boucher : une journée entière
+    absente du RHI ne lève aucune alerte ailleurs (il n'y a pas de pointage
+    à signaler). Jours passés seulement — aujourd'hui n'est pas fini. Une
+    absence réelle (congé, maladie) apparaît aussi : le bureau la connaît,
+    RHI ne la devine pas."""
+    fin_sem = min(lundi + dt.timedelta(days=7), a.date())
+    sortie = {}
+    for r in db.execute(
+            """SELECT pl.personne, pl.jour, pl.ch, pl.libelle, pl.origine FROM planning pl
+               JOIN personnes pe ON pe.nom = pl.personne AND pe.actif = 1
+               WHERE pl.jour >= ? AND pl.jour < ?
+               AND NOT EXISTS (SELECT 1 FROM pointages po WHERE po.personne = pl.personne
+                               AND po.annule = 0 AND substr(po.debut, 1, 10) = pl.jour)
+               ORDER BY pl.jour, pl.personne""", (lundi.isoformat(), fin_sem.isoformat())):
+        o = sortie.setdefault((r["jour"], r["personne"]), {
+            "personne": r["personne"], "jour": r["jour"], "origine": r["origine"], "prevu": []})
+        prevu = {"ch": r["ch"], "libelle": r["libelle"]}
+        if prevu not in o["prevu"]:
+            o["prevu"].append(prevu)
+    return list(sortie.values())
+
+
+def temps_perdu(db, lundi: dt.date, a: dt.datetime) -> dict:
+    """Le temps hors affaire de la semaine, par motif : ce que la réunion
+    voulait mesurer (« attente matière », pannes…), au lieu de le deviner."""
+    fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
+    par_motif, par_personne, total = {}, {}, 0.0
+    for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND debut >= ? AND debut < ?""",
+                        (lundi.isoformat(), fin_sem)):
+        p = dict(r)
+        if _suspendu(p, a):
+            continue
+        h = _heures(p, a)
+        total += h
+        if p["ch"]:
+            continue
+        m = p["motif"] or "AUTRE"
+        par_motif[m] = par_motif.get(m, 0.0) + h
+        par_personne.setdefault(p["personne"], {}).setdefault(m, 0.0)
+        par_personne[p["personne"]][m] += h
+    hors = sum(par_motif.values())
+    return {"total": round(total, 2), "hors_affaire": round(hors, 2),
+            "part": round(100 * hors / total) if total else 0,
+            # Moins d'une minute : un doigt qui a glissé, pas du temps perdu.
+            "motifs": [{"code": k, "libelle": MOTIFS.get(k, k), "heures": round(v, 2),
+                        "qui": sorted(((n, round(d[k], 2)) for n, d in par_personne.items()
+                                       if d.get(k, 0) >= 1 / 60), key=lambda x: -x[1])}
+                       for k, v in sorted(par_motif.items(), key=lambda x: -x[1]) if v >= 1 / 60]}
 
 
 def point_affaire(db, ch: str, a: dt.datetime) -> dict:

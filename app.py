@@ -225,8 +225,11 @@ async def api_plannings(fichier: UploadFile = File(...), c=Depends(db)):
 def api_rhi(personne: str | None = None, semaine: str | None = None, c=Depends(db)):
     lundi = _lundi(semaine)
     noms = [personne] if personne else [p["nom"] for p in base.personnes(c)]
-    releves = [base.rhi(c, n, lundi, maintenant()) for n in noms]
-    return {"lundi": lundi.isoformat(), "releves": releves}
+    a = maintenant()
+    releves = [base.rhi(c, n, lundi, a) for n in noms]
+    return {"lundi": lundi.isoformat(), "releves": releves,
+            "oublis": [o for o in base.oublis(c, lundi, a) if o["personne"] in noms],
+            "temps_perdu": base.temps_perdu(c, lundi, a)}
 
 
 @app.get("/api/rhi.csv", dependencies=[Depends(acces_bureau)])

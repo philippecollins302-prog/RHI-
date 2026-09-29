@@ -163,6 +163,41 @@ c.post("/api/plannings", files={"fichier": ("ate.xlsx", (tmp / "ate.xlsx").read_
 verif(c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]["total"] == 6.5,
       "import sans effet sur les pointages")
 
+# ── Au planning, rien pointé ; le temps perdu ──
+heure["t"] = dt.datetime(2026, 10, 3, 12, 0)
+d = c.get("/api/rhi?semaine=2026-09-28").json()
+vus = {(o["personne"], o["jour"]) for o in d["oublis"]}
+verif(vus == {("LUC", "2026-09-29"), ("MARC", "2026-09-29"), ("PAUL", "2026-09-30"),
+              ("PAUL", "2026-10-01"), ("PAUL", "2026-10-02")},
+      f"les journées au planning sans aucun pointage : {sorted(vus)}")
+luc = [o for o in d["oublis"] if o["personne"] == "LUC"][0]
+verif(luc["prevu"] == [{"ch": "CH00901", "libelle": "LES PINS / GARDE-CORPS"}] and luc["origine"] == "pose",
+      "on dit ce qui était prévu, pour le saisir d'un geste")
+c.post("/api/pointages", json={"personne": "MARC", "ch": "CH00901", "debut": "2026-09-29T07:00",
+                               "fin": "2026-09-29T09:00"})
+c.patch("/api/personnes/PAUL", json={"actif": 0})
+d = c.get("/api/rhi?semaine=2026-09-28").json()
+verif({(o["personne"], o["jour"]) for o in d["oublis"]} == {("LUC", "2026-09-29")},
+      "un seul pointage dans la journée suffit ; une personne désactivée n'est plus attendue")
+c.patch("/api/personnes/PAUL", json={"actif": 1})
+heure["t"] = dt.datetime(2026, 9, 30, 10, 0)
+d = c.get("/api/rhi?semaine=2026-09-28").json()
+verif(("PAUL", "2026-09-30") not in {(o["personne"], o["jour"]) for o in d["oublis"]},
+      "aujourd'hui n'est pas fini : pas encore un oubli")
+verif(c.get("/api/rhi?personne=LUC&semaine=2026-09-28").json()["oublis"][0]["personne"] == "LUC",
+      "le RHI d'une personne ne montre que ses oublis")
+tp = d["temps_perdu"]
+verif(tp["motifs"] == [{"code": "ATTENTE_MATIERE", "libelle": "Attente matière / plans", "heures": 0.25,
+                        "qui": [["PAUL", 0.25]]}] and tp["hors_affaire"] == 0.25,
+      f"le temps perdu, par motif et par personne : {tp}")
+verif(tp["part"] == round(100 * 0.25 / tp["total"]), "sa part dans les heures de la semaine")
+c.post("/api/pointages", json={"personne": "JEAN", "motif": "RANGEMENT", "debut": "2026-09-29T16:00:00",
+                               "fin": "2026-09-29T16:00:20"})
+verif([m["code"] for m in c.get("/api/rhi?semaine=2026-09-28").json()["temps_perdu"]["motifs"]]
+      == ["ATTENTE_MATIERE"], "vingt secondes de « rangement » : un doigt qui a glissé, pas du temps perdu")
+p0 = c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]["pointages"]
+verif(any(x["motif_libelle"] == "Attente matière / plans" for x in p0), "le motif en clair, pour la feuille imprimée")
+
 # ── Codes d'accès ──
 os.environ["RHI_CODE_TERRAIN"] = "atelier"
 os.environ["RHI_CODE_BUREAU"] = "bureau"

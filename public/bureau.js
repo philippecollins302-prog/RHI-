@@ -59,8 +59,15 @@ async function ongletRhi() {
   const d = await api('/api/rhi?semaine=' + vue.semaine);
   const pleins = d.releves.filter((r) => r.total > 0);
   const vides = d.releves.filter((r) => r.total === 0).map((r) => r.personne);
-  $('#vue').innerHTML = choixSemaine() + (pleins.length ? '' :
-      '<div class="rien">Aucune heure pointée cette semaine.</div>') +
+  const tp = d.temps_perdu;
+  $('#vue').innerHTML = choixSemaine() + (pleins.length ? `
+    <div class="carte">
+      <button id="imprimer">🖨 Imprimer les RHI à signer</button>
+      <strong>Hors affaire cette semaine : ${heures(tp.hors_affaire) || '0h'}</strong>
+      <span class="doux">sur ${heures(tp.total) || '0h'} pointées (${esc(tp.part)} %)</span>
+      ${tp.motifs.map((m) => `<br><span class="pastille p-ambre">${esc(m.libelle)} · ${heures(m.heures)}</span>
+        <span class="doux">${esc(m.qui.map((q) => q[0] + ' ' + heures(q[1])).join(', '))}</span>`).join('')}
+    </div>` : '<div class="rien">Aucune heure pointée cette semaine.</div>') +
     pleins.map((r) => `
     <div class="carte">
       <strong style="font-size:20px">${esc(r.personne)}</strong>
@@ -79,6 +86,7 @@ async function ongletRhi() {
     </div>`).join('') +
     (vides.length ? `<p class="doux">Rien pointé cette semaine : ${esc(vides.join(', '))}</p>` : '');
   brancherSemaine();
+  if ($('#imprimer')) $('#imprimer').onclick = () => imprimerRhi(pleins, d.lundi);
   document.querySelectorAll('[data-valider]').forEach((b) => b.onclick = async () => {
     const qui = lire('rhi.qui', '') || prompt('Votre nom (il signe la validation) :') || '';
     if (!qui.trim()) return;
@@ -99,6 +107,39 @@ async function ongletRhi() {
   });
 }
 
+// ── Le RHI imprimé : une page par personne, à signer ──
+function imprimerRhi(releves, lundi) {
+  const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4);
+  const dimanche = new Date(lundi + 'T12:00:00Z');
+  dimanche.setUTCDate(dimanche.getUTCDate() + 6);
+  const page = (r) => `
+    <section class="feuille">
+      <h1>Relevé Hebdomadaire Individuel</h1>
+      <p><strong>${esc(r.personne)}</strong> — semaine du ${esc(date(lundi))} au ${esc(date(dimanche.toISOString()))}
+        ${r.validee ? ` · validé par ${esc(r.validee.par)} le ${esc(date(r.validee.le))}` : ' · <strong>non validé</strong>'}</p>
+      <table>
+        <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
+        ${r.lignes.map((l) => `<tr><td>${esc(l.ch || '—')}</td><td>${esc(l.libelle)}</td>
+          ${l.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(l.total)}</td></tr>`).join('')}
+        <tr class="total"><td></td><td>Total</td>${r.par_jour.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(r.total)}</td></tr>
+      </table>
+      <h2>Détail</h2>
+      <table>
+        <tr><th>Jour</th><th>De</th><th>À</th><th>CH / motif</th><th class="n">Durée</th></tr>
+        ${r.pointages.map((p) => `<tr><td>${esc(date(p.debut))}</td><td>${esc(p.debut.slice(11, 16))}</td>
+          <td>${esc((p.fin || '').slice(11, 16) || 'ouvert')}</td><td>${esc(p.ch || '')} ${esc(p.chantier || p.motif_libelle || p.libelle || '')}</td>
+          <td class="n">${heures(p.heures)}</td></tr>`).join('')}
+      </table>
+      <div class="signatures"><div>Signature du salarié</div><div>Signature du responsable</div></div>
+    </section>`;
+  let zone = $('#impression');
+  if (!zone) { zone = document.createElement('div'); zone.id = 'impression'; document.body.appendChild(zone); }
+  zone.innerHTML = releves.map(page).join('');
+  document.body.classList.add('imprime');
+  window.print();
+  document.body.classList.remove('imprime');
+}
+
 // ── À vérifier : les pointages douteux, corrigeables sur place ──
 async function ongletVerifier() {
   const d = await api('/api/rhi?semaine=' + vue.semaine);
@@ -114,7 +155,19 @@ async function ongletVerifier() {
       <input type="datetime-local" data-champ="debut" value="${esc(jour)}">
       <input type="datetime-local" data-champ="fin" value="${esc(jour)}">
       <button id="ajouter">Ajouter</button>
-    </div>` + (douteux.length ? `
+    </div>` + (d.oublis.length ? `
+    <div class="carte">
+      <strong>Au planning, rien pointé</strong>
+      <span class="doux">— une journée entière absente du RHI. Congé ou maladie : rien à faire ; sinon, saisir.</span>
+      <div class="defile"><table>
+        <tr><th>Qui</th><th>Jour</th><th>Prévu au planning</th><th></th></tr>
+        ${d.oublis.map((o) => `<tr>
+          <td>${esc(o.personne)}</td><td>${esc(JOURS[(new Date(o.jour + 'T12:00:00Z').getUTCDay() + 6) % 7])} ${esc(o.jour.slice(8, 10))}/${esc(o.jour.slice(5, 7))}</td>
+          <td>${o.prevu.map((x) => `<span class="ch">${esc(x.ch || '')}</span> ${esc(x.libelle)}`).join('<br>')}</td>
+          <td><button data-saisir="${esc(o.personne)}" data-jour="${esc(o.jour)}" data-ch="${esc((o.prevu.find((x) => x.ch) || {}).ch || '')}">Saisir</button></td>
+        </tr>`).join('')}
+      </table></div>
+    </div>` : '') + (douteux.length ? `
     <div class="defile"><table>
       <tr><th>Qui</th><th>CH / motif</th><th>Début</th><th>Fin</th><th class="n">Durée</th><th>Pourquoi</th><th></th></tr>
       ${douteux.map((p) => `<tr data-id="${p.id}">
@@ -133,6 +186,15 @@ async function ongletVerifier() {
     tr.querySelectorAll('[data-champ]').forEach((i) => { if (i.value) corps[i.dataset.champ] = i.value; });
     try { await api('/api/pointages/' + tr.dataset.id, {method: 'PATCH', json: corps}); dire('Corrigé'); afficher(); }
     catch (e) { dire(e.message); }
+  });
+  document.querySelectorAll('[data-saisir]').forEach((b) => b.onclick = () => {
+    const champ = (n) => $('#ajout [data-champ=' + n + ']');
+    champ('personne').value = b.dataset.saisir;
+    champ('ch').value = b.dataset.ch;
+    champ('debut').value = b.dataset.jour + 'T07:00';
+    champ('fin').value = b.dataset.jour + 'T12:00';
+    $('#ajout').scrollIntoView();
+    champ('fin').focus();
   });
   $('#ajouter').onclick = async () => {
     const corps = {qui: lire('rhi.qui', '') || 'bureau'};
