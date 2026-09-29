@@ -65,19 +65,22 @@ def ouvrir(chemin):
         raise FichierInattendu(f"Fichier illisible par Excel : {e}") from e
 
 
-def nature(classeur) -> str:
-    """« atelier », « pose » — ou une erreur qui dit ce qu'on a reconnu."""
+ENTREPRISES = {"VIP": "VIP Plus (serrurerie)", "ALFA": "Alfa (menuiserie)"}
+
+
+def nature(classeur) -> tuple:
+    """(genre, entreprise) : (« atelier » | « pose », « VIP » | « ALFA »),
+    ou une erreur qui dit ce qu'on a reconnu."""
     noms = [normaliser(n) for n in classeur.sheetnames]
     if "PLANNING FAB" in noms and "PLAN DE CHARGE" in noms:
         entete = normaliser(classeur[classeur.sheetnames[noms.index("PLANNING FAB")]]["A2"].value)
         if "VIP PLUS" in entete or "PLANNING TRAITEMENT" in noms:
-            return "atelier"
-        raise FichierInattendu("Planning atelier de la menuiserie : prévu pour la V2 "
-                               "(la V1 couvre la serrurerie VIP Plus).")
+            return "atelier", "VIP"
+        return "atelier", "ALFA"
     if any(n.split(" ")[0] in MOIS for n in noms):
-        return "pose"
+        return "pose", "VIP"
     if any(re.fullmatch(r"20\d\d", n) for n in noms):
-        raise FichierInattendu("Planning pose de la menuiserie : prévu pour la V2.")
+        return "pose", "ALFA"
     if "PLANNING DESSINS" in noms:
         raise FichierInattendu("Planning du bureau d'études : le BET ne pointe pas "
                                "(il est en frais), RHI n'en a pas besoin.")
@@ -282,10 +285,144 @@ def lire_pose(classeur) -> dict:
     return {"personnes": sorted(personnes), "affectations": affectations}
 
 
-def lire(chemin) -> dict:
-    """Point d'entrée : reconnaît le fichier et le lit."""
+def lire(chemin, entreprise: str = "VIP") -> dict:
+    """Point d'entrée : reconnaît le fichier et le lit.
+
+    Une instance de RHI sert UNE entreprise (RHI_ENTREPRISE) : le planning
+    de l'autre est refusé en le disant, plutôt que mêlé — les deux ont des
+    prénoms en commun et deux comptes InterFast distincts."""
     classeur = ouvrir(chemin)
-    genre = nature(classeur)
-    donnees = lire_atelier(classeur) if genre == "atelier" else lire_pose(classeur)
+    genre, sienne = nature(classeur)
+    if sienne != entreprise:
+        raise FichierInattendu(f"Planning {genre} de {ENTREPRISES[sienne]} : il se dépose sur le RHI "
+                               f"de cette entreprise, pas sur celui de {ENTREPRISES[entreprise]}.")
+    lecteurs = {("atelier", "VIP"): lire_atelier, ("pose", "VIP"): lire_pose,
+                ("atelier", "ALFA"): lire_atelier_men, ("pose", "ALFA"): lire_pose_men}
+    donnees = lecteurs[(genre, sienne)](classeur)
     donnees["nature"] = genre
     return donnees
+
+
+# ═══════════════════════ MENUISERIE (ALFA) ═══════════════════════
+#
+# Tenus par d'autres mains, sur d'autres modèles (réunion du 29/09/2026 :
+# « c'est pas moi qui le tiens, il y a moins de détails »), et le CH n'y
+# arrive que depuis peu. Les lecteurs prennent ce qui s'y trouve ; une case
+# sans CH reste une affectation (le libellé aide la recherche sur la
+# tablette), elle ne crée pas d'affaire.
+
+SOUS_LIGNES_MEN = {"N AFFAIRE", "N AFFAIRES", "RA", "CA"}
+
+
+def lire_atelier_men(classeur) -> dict:
+    """Planning FAB menuiserie : les noms en colonne B, sous DEBIT / FABRICATION,
+    une ligne « N° AFFAIRES » sous chacun ; dates en ligne 3."""
+    noms = {normaliser(n): n for n in classeur.sheetnames}
+    fab = classeur[noms["PLANNING FAB"]]
+    grille = Grille(fab)
+    # La ligne des dates : celle qui en porte le plus (la 3e dans le vrai
+    # fichier ; on ne s'y fie pas aveuglément).
+    dates = max((_dates_colonnes(fab, r) for r in (2, 3, 4)), key=len)
+    # La zone des opérateurs : de la première ligne DEBIT/FABRICATION en colonne A
+    # jusqu'à la dernière (les lignes au-dessus et au-dessous sont les chargés
+    # d'affaires et les dates de pose demandées).
+    lignes_zone = [r for r in range(1, min(fab.max_row, 200) + 1)
+                   if normaliser(fab.cell(r, 1).value) in ("DEBIT", "FABRICATION")]
+    affectations, personnes = [], []
+    if lignes_zone:
+        zone = range(lignes_zone[0], lignes_zone[-1] + 3)
+        # La zone déborde de deux lignes (les « N° AFFAIRES » du dernier) :
+        # on n'y prend pas la ligne de titre du bloc suivant (« DATE / POSE
+        # DEMANDÉE PAR RA », relevée dans le vrai fichier).
+        tetes = [r for r in zone if fab.cell(r, 2).value
+                 and normaliser(fab.cell(r, 2).value) not in SOUS_LIGNES_MEN
+                 and not normaliser(fab.cell(r, 2).value).startswith("DATE")]
+        for i, r in enumerate(tetes):
+            nom = _nom_personne(fab.cell(r, 2).value)
+            if "SOUS" in nom:
+                continue
+            fin = tetes[i + 1] if i + 1 < len(tetes) else zone.stop
+            personnes.append(nom)
+            for c, jour in dates.items():
+                if jour.weekday() >= 5:
+                    continue
+                v = grille.valeur(r, c)
+                codes = []
+                for rr in range(r, fin):
+                    codes += [x for x in codes_ch(grille.valeur(rr, c)) if x not in codes]
+                if (v and normaliser(v) not in ABSENCES and not codes_ch(v)) or codes:
+                    affectations.append({"personne": nom, "jour": jour, "codes": codes,
+                                         "libelle": " / ".join(lignes(v)) if v and not codes_ch(v) else ""})
+    return {"personnes": sorted(set(personnes)), "affectations": affectations,
+            "affaires": lire_plan_men(classeur[noms["PLAN DE CHARGE"]])}
+
+
+def lire_plan_men(ws) -> list:
+    """Le plan de charge menuiserie : par responsable, une ligne par chantier ;
+    pas d'heures prévues ni, le plus souvent, de CH."""
+    sortie = []
+    for r in range(4, ws.max_row + 1):
+        designation = ws.cell(r, 2).value
+        if not designation:
+            continue
+        codes = codes_ch(designation)
+        sortie.append({"ch": codes[0] if codes else None, "chantier": " ".join(str(designation).split()),
+                       "designation": " ".join(str(designation).split()), "conduc": "",
+                       "heures": None, "semaines": [], "commentaire": ""})
+    return sortie
+
+
+def lire_pose_men(classeur) -> dict:
+    """Planning pose menuiserie : un onglet par année, mois en ligne 1, jours
+    « L5 », « M6 » en ligne 3, une bande par équipe (« PATOU /JEROME ») avec
+    ses lignes « N° AFFAIRE » et « CA »."""
+    personnes, affectations = set(), []
+    for nom_onglet in classeur.sheetnames:
+        if not re.fullmatch(r"20\d\d", nom_onglet.strip()):
+            continue
+        annee = int(nom_onglet.strip())
+        ws = classeur[nom_onglet]
+        grille = Grille(ws)
+        jours, mois = {}, None
+        for c in range(2, min(ws.max_column, 400) + 1):
+            m = normaliser(grille.valeur(1, c))
+            if m.split(" ")[0] in MOIS:
+                mois = MOIS[m.split(" ")[0]]
+            j = re.search(r"\d+", str(ws.cell(3, c).value or ""))
+            if mois and j:
+                try:
+                    jours[c] = dt.date(annee, mois, int(j.group()))
+                except ValueError:
+                    pass
+        r = 4
+        while r <= ws.max_row:
+            etiquette = ws.cell(r, 1).value
+            n = normaliser(etiquette)
+            if not etiquette or n in SOUS_LIGNES_MEN or n.startswith("ST ") or "SOUS TRAITANT" in n:
+                r += 1
+                continue
+            # Une bande = l'étiquette, puis jusqu'à la ligne « N° AFFAIRE ».
+            r_ch = next((k for k in range(r + 1, r + 4)
+                         if normaliser(ws.cell(k, 1).value) in ("N AFFAIRE", "N AFFAIRES")), None)
+            if r_ch is None:
+                r += 1
+                continue
+            # « PATOU \nJEROME », « NABS/ LUCAS/ FOURQAANE » : retour à la ligne,
+            # barre ou esperluette séparent les membres.
+            membres = [normaliser(m) for m in re.split(r"[/&\n]", str(etiquette)) if normaliser(m)]
+            membres = [m.replace("EQUIPE ", "") for m in membres]
+            personnes.update(membres)
+            for c, jour in jours.items():
+                if jour.weekday() >= 5:
+                    continue
+                libelles = [str(grille.valeur(k, c)).strip() for k in range(r, r_ch)
+                            if grille.valeur(k, c) and normaliser(grille.valeur(k, c)) not in ABSENCES
+                            and str(grille.valeur(k, c)).strip()]
+                codes = codes_ch(grille.valeur(r_ch, c))
+                if libelles or codes:
+                    for m in membres:
+                        affectations.append({"personne": m, "jour": jour, "codes": codes,
+                                             "libelle": " / ".join(dict.fromkeys(
+                                                 x for l in libelles for x in lignes(l)))})
+            r = r_ch + 1
+    return {"personnes": sorted(personnes), "affectations": affectations}

@@ -1,7 +1,11 @@
 # RHI — Relevé Hebdomadaire Individuel · guide pour Claude Code
 
-Pointage des heures **par affaire (CH)** pour VIP Plus (serrurerie), Groupe
-Alma. Né de la réunion du 29/09/2026 (Philippe, Alexis — responsable
+Pointage des heures **par affaire (CH)** pour VIP Plus (serrurerie) et Alfa
+(menuiserie), Groupe Alma — **une instance par entreprise** (`RHI_ENTREPRISE`
+= `VIP` ou `ALFA`) : même code, base et clé InterFast séparées, et chaque
+instance refuse le planning de l'autre en le disant. Pourquoi pas une base
+commune : deux comptes InterFast distincts, et des prénoms en commun entre
+les deux plannings (ils se seraient confondus en silence). Né de la réunion du 29/09/2026 (Philippe, Alexis — responsable
 serrurerie/menuiserie —, Serge qui développe). Tout est en **français** :
 code commenté, commits narratifs, écrans, bancs. Même esprit qu'Ali Baba.
 
@@ -14,7 +18,8 @@ est faite.
 
 ## Ce qui est en place (V1)
 - `app.py` — FastAPI. `uvicorn app:app --host 0.0.0.0 --port 9000`.
-- `rhi/lecture.py` — lit les plannings Excel d'Alexis (ATE et POSE SER).
+- `rhi/lecture.py` — lit les plannings Excel : ATE et POSE SER (VIP), Planning
+  ATELIER MEN et POSE MEN (Alfa, noms en colonne B, onglet par année).
   Cases fusionnées résolues, noms des opérateurs lus dans la colonne du
   samedi, colonnes du plan de charge repérées **par leur titre**.
 - `rhi/base.py` — SQLite (`$RHI_DONNEES/rhi.db`) : personnes, affaires,

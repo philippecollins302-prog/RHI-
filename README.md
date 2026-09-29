@@ -30,11 +30,12 @@ planning ATE et le planning POSE SER. La tablette est sur
 
 | Variable | Rôle |
 |---|---|
+| `RHI_ENTREPRISE` | `VIP` (serrurerie, par défaut) ou `ALFA` (menuiserie) : une instance par entreprise |
 | `RHI_DONNEES` | dossier de la base (`donnees/` par défaut ; `/donnees` sur Clever Cloud) |
 | `RHI_CODE_TERRAIN` | code des tablettes et téléphones |
 | `RHI_CODE_BUREAU` | code du bureau (voit tout) |
 | `RHI_COUT_HORAIRE` | taux horaire moyen (€/h) quand une personne n'a pas le sien |
-| `INTERFAST_VIP` | clé InterFast de VIP Plus — jamais dans le dépôt |
+| `INTERFAST_VIP` / `INTERFAST_ALFA` | clé InterFast de l'entreprise de l'instance — jamais dans le dépôt |
 
 ## Bancs
 

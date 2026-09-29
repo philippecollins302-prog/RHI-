@@ -3,6 +3,10 @@
 const JOURS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const vue = {onglet: lire('rhi.onglet', 'rhi'), semaine: '', personne: ''};
 
+fetch('/api/config').then((r) => r.json()).then((c) => {
+  $('#titre-bureau').textContent = 'RHI · Bureau — ' + c.nom;
+}).catch(() => { /* le titre générique suffit */ });
+
 function lundiDe(d) {
   const x = new Date(d); const j = (x.getDay() + 6) % 7;
   x.setDate(x.getDate() - j);

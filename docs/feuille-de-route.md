@@ -29,8 +29,14 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
    saisie), coût horaire par personne, part de main-d'œuvre dans le vendu.
 
 ## V2 — menuiserie (Alfa)
-Les plannings MEN n'ont pas la même forme (onglet par année côté pose, pas
-de bande « N° AFFAIRE ») : lecteurs dédiés, clé `INTERFAST_ALFA`.
+- ~~Lecteurs des plannings MEN~~ — faits (atelier : noms en colonne B ;
+  pose : onglet par année, équipes séparées par un retour à la ligne).
+- ~~Une instance par entreprise~~ — `RHI_ENTREPRISE=ALFA`, clé
+  `INTERFAST_ALFA` (docs/deploiement.md §6).
+- Reste : la clé InterFast d'Alfa pour relire ses chantiers et ses comptes ;
+  le CH n'arrive que depuis peu dans ses plannings (102 cases sur 776 à
+  l'atelier, 187 sur 1 717 en pose le 29/09/2026) — le reste se pointe par
+  la recherche sur la tablette.
 
 ## Plus tard
 - ~~Écran d'atelier qui fait défiler atelier / pose~~ — fait (`/ecran`).

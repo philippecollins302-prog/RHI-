@@ -38,14 +38,24 @@ class InterFastIndisponible(RuntimeError):
     pass
 
 
+# Une instance de RHI = une entreprise = un compte InterFast (mêmes noms de
+# variables que dans Ali Baba).
+CLES = {"VIP": "INTERFAST_VIP", "ALFA": "INTERFAST_ALFA"}
+
+
+def entreprise() -> str:
+    e = os.getenv("RHI_ENTREPRISE", "VIP").strip().upper()
+    return e if e in CLES else "VIP"
+
+
 def cle() -> str:
-    return os.getenv("INTERFAST_VIP", "")
+    return os.getenv(CLES[entreprise()], "")
 
 
 async def _appel(methode: str, params: dict, transport=None) -> dict:
     k = cle()
     if not k:
-        raise InterFastIndisponible("Clé INTERFAST_VIP absente de l'environnement")
+        raise InterFastIndisponible(f"Clé {CLES[entreprise()]} absente de l'environnement")
     corps = {"jsonrpc": "2.0", "id": 1, "method": methode, "params": params}
     # InterFast répond parfois 401 ou 429 sous une rafale d'appels, puis
     # accepte la même requête une seconde plus tard (constaté le 29/09/2026

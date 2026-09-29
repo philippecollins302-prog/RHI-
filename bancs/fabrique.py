@@ -90,3 +90,52 @@ def bet(chemin):
     wb.active.title = "Plan de charge"
     wb.create_sheet("Planning Dessins")
     wb.save(chemin)
+
+
+def atelier_men(chemin):
+    """Planning atelier menuiserie : noms en colonne B, lignes « N° AFFAIRES »."""
+    wb = openpyxl.Workbook()
+    pc = wb.active
+    pc.title = "Plan de charge"
+    pc["A3"], pc["B3"] = "Resp.", "Désignation"
+    pc["A5"] = "Resp1"
+    pc["B6"] = "Ecole des Oliviers CH00911"
+    fab = wb.create_sheet("Planning FAB")
+    lundi = dt.date(2026, 9, 28)
+    for i in range(7):
+        fab.cell(3, 3 + i, dt.datetime.combine(lundi + dt.timedelta(days=i), dt.time()))
+    fab["A4"], fab["B4"] = "AA", "/APPRO VERRE"       # chargés d'affaires : pas des opérateurs
+    fab["A10"], fab["B10"] = "DEBIT", "HUGO"
+    fab.cell(10, 3, "ECOLE DES OLIVIERS")
+    fab.merge_cells(start_row=10, start_column=3, end_row=10, end_column=4)
+    fab.cell(11, 3, "CH00911")
+    fab.merge_cells(start_row=11, start_column=3, end_row=11, end_column=4)
+    fab["A13"], fab["B13"] = "FABRICATION", "NINA"
+    fab["B14"], fab["B15"] = "N° AFFAIRES", "RA"
+    fab.cell(13, 5, "SANS NUMERO ENCORE")          # pas de CH : affectation sans affaire
+    fab.cell(13, 6, "cp")
+    fab["B17"] = "DATE /POSE/DEMANDE PAR RA"       # titre du bloc suivant
+    wb.save(chemin)
+
+
+def pose_men(chemin):
+    """Planning pose menuiserie : onglet par année, « L28 » en ligne 3."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "2026"
+    ws.cell(1, 2, "SEPTEMBRE")
+    ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=4)
+    ws.cell(1, 5, "OCTOBRE")
+    for c, j in ((2, "L28"), (3, "M29"), (4, "M30"), (5, "J1")):
+        ws.cell(3, c, j)
+    ws["A3"] = "EQUIPES"
+    ws["A4"] = "OSCAR \nPAUL"                      # membres séparés par un retour à la ligne
+    ws["A6"], ws["A7"] = "N° AFFAIRE", "CA"
+    ws.cell(4, 2, "ECOLE DES OLIVIERS\nMENUISERIES")
+    ws.cell(6, 2, "CH00911")
+    ws.cell(4, 3, "CP")
+    ws.cell(5, 4, "SAV DIVERS")                    # deuxième ligne de la bande
+    ws["A9"] = "ST SOUS-TRAITANT"                  # sous-traitant : ne pointe pas
+    ws["A10"], ws["A11"] = "N° AFFAIRE", "CA"
+    ws.cell(9, 2, "CHANTIER X")
+    wb.save(chemin)

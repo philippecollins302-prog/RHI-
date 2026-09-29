@@ -134,12 +134,20 @@ def _quand(texte: str | None) -> dt.datetime:
     return t
 
 
+@app.get("/api/config")
+def api_config():
+    """Pour les titres des écrans : quelle entreprise sert cette instance."""
+    e = interfast.entreprise()
+    return {"entreprise": e, "nom": lecture.ENTREPRISES[e]}
+
+
 @app.get("/api/sante")
 def sante(c=Depends(db)):
     """Ce qu'on vérifie après chaque déploiement (docs/deploiement.md) : la
     base doit être dans donnees/ (le bucket), en journal « delete »."""
     chemin = Path(getattr(app.state, "chemin_base", None) or base.chemin_base()).resolve()
     return {"ok": True, "heure": maintenant().isoformat(), "interfast_ecriture": interfast.ECRITURE,
+            "entreprise": interfast.entreprise(),
             "base": {"dans_donnees": "donnees" in chemin.parts or bool(os.getenv("RHI_DONNEES")),
                      "journal": c.execute("PRAGMA journal_mode").fetchone()[0],
                      "inscriptible": os.access(chemin.parent, os.W_OK)},
@@ -205,7 +213,7 @@ async def api_plannings(fichier: UploadFile = File(...), c=Depends(db)):
         t.write(contenu)
         t.flush()
         try:
-            donnees = lecture.lire(t.name)
+            donnees = lecture.lire(t.name, interfast.entreprise())
         except lecture.FichierInattendu as e:
             raise HTTPException(422, str(e))
     res = base.importer(c, donnees)

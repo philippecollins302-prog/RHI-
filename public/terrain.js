@@ -39,6 +39,8 @@ document.addEventListener('pointerdown', reveil);
 
 $('#changer').onclick = accueil;
 
+fetch('/api/config').then((r) => r.json()).then((c) => ecrire('rhi.entreprise', c.nom)).catch(() => {});
+
 function choisirMode() {
   $('#titre').textContent = 'RHI · Cet appareil sert à…';
   $('#changer').hidden = true;

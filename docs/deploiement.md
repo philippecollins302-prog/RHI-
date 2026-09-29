@@ -80,7 +80,20 @@ Puis `clever activity --app <id>` (le déploiement est-il OK ?) et
    réseau.
 5. L'écran du mur : ouvrir `/ecran` en plein écran (F11), code terrain.
 
-## 6. Sauvegardes
+## 6. La menuiserie (Alfa) : une deuxième application
+
+Même code, **autre application** Clever Cloud (`rhi-alfa`), **autre FS
+Bucket**, et deux variables qui changent :
+
+| Variable | Valeur |
+|---|---|
+| `RHI_ENTREPRISE` | `ALFA` |
+| `INTERFAST_ALFA` | la clé InterFast d'Alfa (à la place de `INTERFAST_VIP`) |
+
+Codes d'accès propres à Alfa. Chaque instance refuse les plannings de
+l'autre, et `/api/sante` affiche `"entreprise"`.
+
+## 7. Sauvegardes
 
 - Automatique : une copie cohérente par jour dans `donnees/sauvegardes/`,
   gardée 30 jours. Elle protège d'une erreur (import raté, correction de
