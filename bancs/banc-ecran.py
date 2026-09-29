@@ -40,4 +40,13 @@ for fonction in re.findall(r":\s*(\w+)", carte):
           f"bureau.js : {fonction} doit être déclarée au niveau du fichier")
 verif(bureau.rstrip().endswith("afficher();"), "bureau.js se termine par l'appel de démarrage")
 
+# La coquille hors ligne doit contenir tout ce que la page de la tablette charge.
+sw = (PUB / "sw.js").read_text()
+coquille = set(re.findall(r"'(/[^']*)'", re.search(r"SHELL = \[(.*?)\]", sw).group(1)))
+index = (PUB / "index.html").read_text()
+for src in re.findall(r'(?:src|href)="([^"#:]+)"', index):
+    verif("/" + src in coquille, f"sw.js : {src} manque à la coquille hors ligne")
+verif("/" in coquille, "sw.js : la page elle-même est dans la coquille")
+verif("startsWith('/api/')" in sw, "sw.js : l'API ne passe jamais par le cache")
+
 fin("banc-ecran")

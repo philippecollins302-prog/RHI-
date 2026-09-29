@@ -169,12 +169,12 @@ async function ongletAffaires() {
 // ── En ce moment : qui pointe sur quoi ──
 async function ongletDirect() {
   const d = await api('/api/en-cours');
-  const now = new Date(d.maintenant).getTime();
+  const now = d.maintenant_ms;
   $('#vue').innerHTML = d.pointages.length ? `<table>
     <tr><th>Qui</th><th>CH</th><th>Chantier / motif</th><th>Depuis</th><th class="n">Durée</th></tr>
     ${d.pointages.map((p) => `<tr><td>${esc(p.personne)}</td><td class="ch">${esc(p.ch || '—')}</td>
       <td>${esc(p.chantier || p.libelle || p.motif)}</td><td>${esc(p.debut.slice(11, 16))}</td>
-      <td class="n">${duree((now - new Date(p.debut).getTime()) / 1000)}</td></tr>`).join('')}
+      <td class="n">${duree((now - msDeParis(p.debut)) / 1000)}</td></tr>`).join('')}
   </table>` : '<div class="rien">Personne ne pointe en ce moment.</div>';
 }
 

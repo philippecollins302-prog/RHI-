@@ -32,6 +32,10 @@ b = base.connexion(ancienne)
 cols = {r[1] for r in b.execute("PRAGMA table_info(personnes)")}
 verif({"cout_horaire", "interfast_user_id", "nom_complet"} <= cols, "colonnes ajoutées")
 verif(b.execute("SELECT nom FROM personnes").fetchone()[0] == "ANCIEN", "rien de perdu")
+# La course de deux requêtes simultanées : la colonne apparaît entre le
+# PRAGMA et l'ALTER. Le second ajout doit passer sans erreur.
+base.ajouter_colonne(b, "personnes", "cout_horaire", "REAL")
+verif(True, "ajout d'une colonne déjà présente : toléré")
 b.close()
 
 import app as appli  # noqa: E402

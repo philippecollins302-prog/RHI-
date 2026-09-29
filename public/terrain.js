@@ -4,6 +4,10 @@
 // je touche « J'arrête ». Toucher un autre chantier arrête le précédent :
 // rien ne bloque, jamais (réunion du 29/09/2026). Ce qui est douteux se
 // corrige au bureau.
+//
+// Jamais bloqué, même sans réseau : chaque geste part dans une file gardée
+// sur l'appareil, avec son heure ; la file se vide dès que le serveur
+// répond. Les listes (noms, chantiers) sont gardées de la dernière fois.
 
 const etat = {
   mode: lire('rhi.mode', ''),          // 'atelier' | 'pose', choisi une fois par appareil
@@ -57,14 +61,21 @@ async function accueil() {
   etat.filtre = '';
   $('#changer').hidden = true;
   $('#titre').textContent = etat.mode === 'pose' ? 'RHI · Qui est sur le chantier ?' : 'RHI · Qui es-tu ?';
-  let liste = [], encours = [];
+  let liste = [], encours = {pointages: []};
   try {
     [liste, encours] = await Promise.all([
       api('/api/personnes?equipe=' + etat.mode), api('/api/en-cours')]);
+    ecrire('rhi.c.personnes.' + etat.mode, JSON.stringify(liste));
+    ecrire('rhi.c.encours', JSON.stringify(encours));
   } catch (e) {
-    $('#ecran').innerHTML = `<div class="rien">Pas de connexion au serveur : ${esc(e.message)}.<br>
-      <button onclick="accueil()">Réessayer</button></div>`;
-    return;
+    if (e.http) { dire(e.message); }
+    liste = lireJson('rhi.c.personnes.' + etat.mode, []);
+    encours = lireJson('rhi.c.encours', {pointages: []});
+    if (!liste.length) {
+      $('#ecran').innerHTML = `<div class="rien">Pas de réseau, et cet appareil n'a encore jamais reçu la liste des noms.
+        Il faut une première connexion.<br><button onclick="accueil()">Réessayer</button></div>`;
+      return;
+    }
   }
   const tourne = new Map(encours.pointages.map((p) => [p.personne, p]));
   const pose = etat.mode === 'pose';
@@ -103,18 +114,84 @@ async function ouvrir(noms) {
 }
 
 async function rafraichir() {
-  try {
-    const [menu, encours] = await Promise.all([
-      api('/api/menu?personne=' + encodeURIComponent(etat.personnes[0])),
-      api('/api/en-cours')]);
-    etat.menu = menu;
-    etat.ecart = new Date(encours.maintenant).getTime() - Date.now();
-    etat.enCours = encours.pointages.filter((p) => etat.personnes.includes(p.personne));
-  } catch (e) {
-    dire('Serveur injoignable : ' + e.message);
-    return;
+  const cle = 'rhi.c.menu.' + etat.personnes[0];
+  await vider();
+  if (!enAttente().length) {
+    try {
+      const [menu, encours] = await Promise.all([
+        api('/api/menu?personne=' + encodeURIComponent(etat.personnes[0])),
+        api('/api/en-cours')]);
+      etat.menu = menu;
+      ecrire(cle, JSON.stringify(menu));
+      etat.ecart = encours.maintenant_ms - Date.now();
+      ecrire('rhi.ecart', String(etat.ecart));
+      etat.enCours = encours.pointages.filter((p) => etat.personnes.includes(p.personne));
+      dessiner();
+      return;
+    } catch (e) {
+      if (e.http) dire(e.message);
+    }
   }
+  // Hors ligne (ou gestes pas encore partis) : ce que l'appareil sait.
+  etat.menu = etat.menu || lireJson(cle, null) ||
+    {planning: [], taches_sans_ch: [], affaires: [], motifs: MOTIFS_SECOURS};
+  etat.enCours = lireJson('rhi.c.actuel.' + etat.personnes.join('+'), etat.enCours || []);
   dessiner();
+}
+
+// Les motifs, au cas où l'appareil n'aurait jamais reçu de menu.
+const MOTIFS_SECOURS = [{code: 'ATTENTE_MATIERE', libelle: 'Attente matière / plans'},
+  {code: 'RANGEMENT', libelle: 'Rangement · nettoyage'}, {code: 'PANNE', libelle: 'Panne machine'},
+  {code: 'TRAJET', libelle: 'Trajet · dépôt'}, {code: 'AUTRE', libelle: 'Autre (à préciser au bureau)'}];
+
+// ── La file des gestes ──
+function enAttente() { return lireJson('rhi.file', []); }
+
+function heureServeur() {
+  return isoParis(Date.now() + (etat.ecart || Number(lire('rhi.ecart', '0')) || 0));
+}
+
+let enCoursDeVidage = false;
+async function vider() {
+  if (enCoursDeVidage) return;
+  enCoursDeVidage = true;
+  try {
+    let file = enAttente();
+    while (file.length) {
+      try {
+        await api(file[0].chemin, {method: 'POST', json: file[0].corps});
+      } catch (e) {
+        if (!e.http) break;                    // pas de réseau : on réessaiera
+        dire('Geste refusé par le serveur : ' + e.message);   // refusé : ne pas rejouer en boucle
+      }
+      file = enAttente().slice(1);
+      ecrire('rhi.file', JSON.stringify(file));
+    }
+  } finally {
+    enCoursDeVidage = false;
+    bandeau();
+  }
+}
+
+function bandeau() {
+  const n = enAttente().length;
+  const b = $('#reseau');
+  if (!b) return;
+  b.hidden = !n;
+  const s = n > 1 ? 's' : '';
+  b.textContent = n ? 'Hors ligne · ' + n + ' geste' + s + ' en attente, envoyé' + s + ' au retour du réseau' : '';
+}
+setInterval(vider, 20000);
+window.addEventListener('online', vider);
+
+function geste(chemin, corps, actuel) {
+  const file = enAttente();
+  file.push({chemin, corps: Object.assign({quand: heureServeur()}, corps)});
+  ecrire('rhi.file', JSON.stringify(file));
+  // Ce que l'écran montre tout de suite, réseau ou pas.
+  etat.enCours = actuel;
+  ecrire('rhi.c.actuel.' + etat.personnes.join('+'), JSON.stringify(actuel));
+  bandeau();
 }
 
 function dessiner() {
@@ -171,30 +248,35 @@ function dessiner() {
 }
 
 async function demarrer(quoi) {
-  try {
-    await api('/api/demarrer', {method: 'POST',
-      json: Object.assign({personnes: etat.personnes, appareil: APPAREIL}, quoi)});
-    etat.filtre = '';
-    dire('▶ C\'est parti : ' + (quoi.ch || 'hors affaire'));
-    await rafraichir();
-  } catch (e) { dire('Pas pointé : ' + e.message); }
+  const chantier = quoi.ch ? ((etat.menu.affaires.find((a) => a.ch === quoi.ch) || {}).chantier || '') : '';
+  const debut = heureServeur();
+  geste('/api/demarrer', Object.assign({personnes: etat.personnes, appareil: APPAREIL}, quoi),
+    etat.personnes.map((p) => ({personne: p, ch: quoi.ch || null, motif: quoi.motif || null,
+      libelle: quoi.libelle || '', chantier, debut})));
+  etat.filtre = '';
+  dire('▶ C\'est parti : ' + (quoi.ch || 'hors affaire'));
+  await rafraichir();
 }
 
 async function arreter() {
-  try {
-    await api('/api/arreter', {method: 'POST', json: {personnes: etat.personnes}});
-    dire('■ Arrêté');
-    if (etat.mode === 'atelier') { accueil(); return; }
-    await rafraichir();
-  } catch (e) { dire('Pas arrêté : ' + e.message); }
+  geste('/api/arreter', {personnes: etat.personnes}, []);
+  dire('■ Arrêté');
+  if (etat.mode === 'atelier') { vider(); accueil(); return; }
+  await rafraichir();
 }
 
 function tic() {
   const c = $('#chrono');
   if (!c) return;
-  const debut = new Date(c.dataset.debut).getTime();
+  const debut = msDeParis(c.dataset.debut);
   c.textContent = duree((Date.now() + etat.ecart - debut) / 1000);
 }
 setInterval(tic, 1000);
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => { /* sans lui, la page marche en ligne */ });
+}
+
+bandeau();
+vider();
 etat.mode ? accueil() : choisirMode();

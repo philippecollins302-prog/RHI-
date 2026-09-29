@@ -13,6 +13,7 @@ import datetime as dt
 import io
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -74,10 +75,34 @@ class Demarrage(BaseModel):
     motif: str | None = None
     libelle: str = ""
     appareil: str = ""
+    quand: str | None = None   # heure du geste, si pointé hors ligne
 
 
 class Arret(BaseModel):
     personnes: list[str]
+    quand: str | None = None
+
+
+# Un geste rejoué plus de 72 h après : le bureau le saisit à la main, en
+# connaissance de cause, plutôt qu'une tablette oubliée dans un tiroir ne
+# réécrive une semaine déjà relue.
+RETARD_MAX = dt.timedelta(hours=72)
+
+
+def _quand(texte: str | None) -> dt.datetime:
+    """L'heure du geste. Une horloge d'appareil en avance est ramenée à maintenant."""
+    now = maintenant()
+    if not texte:
+        return now
+    try:
+        t = dt.datetime.fromisoformat(texte).replace(tzinfo=None, microsecond=0)
+    except ValueError:
+        raise HTTPException(422, "Heure illisible")
+    if t > now:
+        return now
+    if now - t > RETARD_MAX:
+        raise HTTPException(422, "Pointage de plus de 72 h : à saisir au bureau")
+    return t
 
 
 @app.get("/api/sante")
@@ -98,7 +123,11 @@ def api_menu(personne: str, jour: str | None = None, c=Depends(db)):
 
 @app.get("/api/en-cours", dependencies=[Depends(acces_terrain)])
 def api_en_cours(personne: str | None = None, c=Depends(db)):
-    return {"maintenant": maintenant().isoformat(), "pointages": base.en_cours(c, personne)}
+    # `maintenant_ms` (instant absolu) : l'appareil en déduit son écart
+    # d'horloge sans dépendre de son fuseau — une tablette réglée en UTC
+    # lisait « 11:36 » de Paris comme 11:36 UTC, deux heures d'erreur.
+    return {"maintenant": maintenant().isoformat(), "maintenant_ms": int(time.time() * 1000),
+            "pointages": base.en_cours(c, personne)}
 
 
 @app.post("/api/demarrer", dependencies=[Depends(acces_terrain)])
@@ -110,8 +139,8 @@ def api_demarrer(d: Demarrage, c=Depends(db)):
         ch = lecture.codes_ch(ch)[0]
     try:
         ids = base.demarrer(c, [p.strip().upper() for p in d.personnes if p.strip()],
-                            maintenant(), ch=ch, motif=d.motif, libelle=d.libelle,
-                            appareil=d.appareil)
+                            _quand(d.quand), ch=ch, motif=d.motif, libelle=d.libelle,
+                            appareil=d.appareil, recu=maintenant())
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"ids": ids, "pointages": base.en_cours(c)}
@@ -119,7 +148,7 @@ def api_demarrer(d: Demarrage, c=Depends(db)):
 
 @app.post("/api/arreter", dependencies=[Depends(acces_terrain)])
 def api_arreter(a: Arret, c=Depends(db)):
-    n = base.arreter(c, [p.strip().upper() for p in a.personnes], maintenant())
+    n = base.arreter(c, [p.strip().upper() for p in a.personnes], _quand(a.quand))
     return {"arretes": n}
 
 

@@ -115,13 +115,32 @@ def connexion(chemin=None) -> sqlite3.Connection:
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
     # Une base plus ancienne que ces colonnes les reçoit ici : on ne perd
-    # jamais une base de production pour une colonne ajoutée.
-    for table, colonnes in AJOUTS.items():
-        presentes = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
-        for col, decl in colonnes:
-            if col not in presentes:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    # jamais une base de production pour une colonne ajoutée. Une fois par
+    # base et par processus.
+    cle = str(chemin or chemin_base())
+    if cle not in _MIGREES:
+        for table, colonnes in AJOUTS.items():
+            presentes = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+            for col, decl in colonnes:
+                if col not in presentes:
+                    ajouter_colonne(db, table, col, decl)
+        _MIGREES.add(cle)
     return db
+
+
+_MIGREES = set()
+
+
+def ajouter_colonne(db, table, col, decl):
+    """ALTER TABLE qui supporte la course : deux requêtes ouvrent la base au
+    même instant, toutes deux voient la colonne absente, la seconde trouve
+    la colonne ajoutée par la première (constaté le 29/09/2026 : « duplicate
+    column name: recu » au chargement de la tablette)."""
+    try:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e):
+            raise
 
 
 AJOUTS = {
@@ -129,7 +148,13 @@ AJOUTS = {
                  ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER")],
     "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
                   ("cout_interfast", "REAL"), ("cout_horaire", "REAL")],
+    # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
+    # ligne, rejoué au retour du réseau.
+    "pointages": [("recu", "TEXT")],
 }
+
+# Écart au-delà duquel un geste est dit « rejoué » (hors ligne).
+DIFFERE_S = 120
 
 
 class SemaineValidee(ValueError):
@@ -420,7 +445,11 @@ def en_cours(db, personne=None) -> list:
 
 
 def arreter(db, noms: list, quand: dt.datetime) -> int:
-    """Clôt le pointage ouvert de chaque personne. Rien d'ouvert : rien à faire."""
+    """Clôt le pointage ouvert de chaque personne. Rien d'ouvert : rien à faire.
+
+    `quand` peut être dans le passé (geste hors ligne rejoué) : seul un
+    pointage commencé AVANT est clos — un pointage démarré depuis, sur un
+    autre appareil, n'est pas touché."""
     n = 0
     with db:
         for nom in noms:
@@ -431,7 +460,7 @@ def arreter(db, noms: list, quand: dt.datetime) -> int:
 
 
 def demarrer(db, noms: list, quand: dt.datetime, ch=None, motif=None,
-             libelle="", appareil="") -> list:
+             libelle="", appareil="", recu: dt.datetime | None = None) -> list:
     """Démarre un pointage pour une ou plusieurs personnes (chef + binôme).
 
     Arrête d'abord ce qui tournait : on ne fabrique pas deux choses à la
@@ -453,10 +482,20 @@ def demarrer(db, noms: list, quand: dt.datetime, ch=None, motif=None,
         for nom in noms:
             db.execute("""INSERT INTO personnes(nom, equipe, vu_le) VALUES (?, 'atelier', ?)
                           ON CONFLICT(nom) DO NOTHING""", (nom, _iso(quand)))
-            cur = db.execute("""INSERT INTO pointages(personne, ch, motif, libelle, debut, appareil)
-                                VALUES (?,?,?,?,?,?)""",
-                             (nom, ch, None if ch else motif, libelle or "", _iso(quand), appareil))
+            differe = recu and (recu - quand).total_seconds() > DIFFERE_S
+            cur = db.execute("""INSERT INTO pointages(personne, ch, motif, libelle, debut, appareil, recu)
+                                VALUES (?,?,?,?,?,?,?)""",
+                             (nom, ch, None if ch else motif, libelle or "", _iso(quand), appareil,
+                              _iso(recu) if differe else None))
             ids.append(cur.lastrowid)
+            # Rejoué dans le passé alors qu'un pointage plus récent existe
+            # déjà (pointé ailleurs entre-temps) : celui-ci s'arrête là où
+            # l'autre commence. Jamais deux choses à la fois.
+            suivant = db.execute("""SELECT MIN(debut) FROM pointages WHERE personne=? AND annule=0
+                                    AND debut > ? AND id != ?""",
+                                 (nom, _iso(quand), cur.lastrowid)).fetchone()[0]
+            if suivant:
+                db.execute("UPDATE pointages SET fin=? WHERE id=?", (suivant, cur.lastrowid))
     return ids
 
 
@@ -524,6 +563,9 @@ def _alertes(p: dict, a: dt.datetime) -> list:
         alertes.append("Passe minuit")
     if not p["ch"] and p["motif"] == "AUTRE":
         alertes.append("Motif « autre » à préciser")
+    if p.get("recu"):
+        alertes.append("Pointé hors ligne, reçu le %s à %s" % (p["recu"][8:10] + "/" + p["recu"][5:7],
+                                                              p["recu"][11:16]))
     if p.get("source") == "tablette":
         alertes.append("CH saisi à la main, absent des plannings")
     return alertes

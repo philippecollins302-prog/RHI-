@@ -62,3 +62,4 @@ tr.total td { font-weight: 700; }
 .carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px; padding: 16px;
   margin-bottom: 12px; }
 .doux { color: var(--doux); }
+.reseau { padding: 10px 16px; background: var(--ambre-clair); color: var(--ambre); font-weight: 600; }

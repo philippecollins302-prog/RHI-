@@ -32,6 +32,19 @@ est faite.
   des plannings est accepté et signalé ; un arrêt oublié reste ouvert et
   signalé. Tout ce qui est douteux se corrige **au bureau**, rien ne se
   refuse sur la tablette.
+- **Jamais bloqué, même sans réseau.** Chaque geste de la tablette part
+  dans une file gardée sur l'appareil (`rhi.file`), avec son heure, et se
+  vide dès que le serveur répond ; un refus du serveur (4xx) n'est pas
+  rejoué en boucle. Le service worker (`public/sw.js`, réseau d'abord)
+  sert la page hors ligne ; tout fichier chargé par `index.html` doit être
+  dans son `SHELL` (le banc d'écran le vérifie). Côté serveur, `quand` est
+  l'heure du geste : au-delà de 72 h, refus (saisie au bureau) ; un geste
+  rejoué dans le passé s'arrête là où le pointage suivant commence.
+- **Les heures côté navigateur ne dépendent jamais du fuseau de
+  l'appareil** : `maintenant_ms` pour l'écart d'horloge, `isoParis()` et
+  `msDeParis()` pour convertir (banc-heures, quatre fuseaux et la nuit du
+  changement d'heure). `new Date("2026-09-29T07:30:00")` est interdit : il
+  lit l'heure dans le fuseau de l'appareil.
 - **Hyper simple.** Trois gestes : mon nom, mon chantier, « J'arrête ».
   Boutons pour des gants. À l'atelier la tablette revient aux noms après
   une minute sans geste (elle est partagée).
