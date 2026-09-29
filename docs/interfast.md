@@ -44,6 +44,14 @@ Personnes), **3 opérateurs du planning atelier archivés dans InterFast**, et
 **9 noms des plannings sans aucun compte** (dont des intérimaires et des
 libellés d'équipe). Liste nominative : onglet Personnes, pas ce dépôt public.
 
+**Le vendu par CH** : l'API ne relie pas un devis à un chantier, mais les
+devis importés d'Optima portent le CH dans leur titre (« Import Optima -
+CH00045 »). RHI additionne les devis *signés* ou *payés* dont le titre porte
+le CH. Le 29/09/2026 : 13 des 33 CH des plannings ont au moins un devis ainsi
+titré, 9 un devis signé. Les autres affichent « — », jamais 0 € : **pour
+chiffrer toutes les affaires, il faut que le CH figure dans le titre du
+devis** (ou qu'InterFast expose le lien devis → chantier).
+
 ## Ce que l'API ne permet pas
 
 **Aucune écriture d'heures.** Les feuilles de temps (*timesheets*) existent,

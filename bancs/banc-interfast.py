@@ -40,6 +40,33 @@ PAGES = [
   Statut: Non démarré | Client: VILLE
 """,
 ]
+# Forme relevée le 29/09/2026 ; espaces fines insécables dans les montants.
+DEVIS = {"CH00901": """Page 1/1 — 4 devis au total
+
+• [aaaaaaaa-0000-0000-0000-000000000001] Import Optima - CH00901 (Réf: D0100)
+  Statut: Signé
+  Client: BAILLEUR SUD
+  Montant: HT: 12\u202f500,50 € | TTC: 15\u202f000,60 €
+  Créé le: 03/09/2026
+
+• [aaaaaaaa-0000-0000-0000-000000000002] Import Optima - CH00901 avenant (Réf: D0101)
+  Statut: Payé
+  Client: BAILLEUR SUD
+  Montant: HT: 1 000,00 € | TTC: 1 200,00 €
+
+• [aaaaaaaa-0000-0000-0000-000000000003] Import Optima - CH00901 (Sans référence)
+  Statut: Annulé
+  Montant: HT: 99 999,00 € | TTC: 1,00 €
+
+• [aaaaaaaa-0000-0000-0000-000000000004] Autre chantier du même client (Réf: D0102)
+  Statut: Signé
+  Montant: HT: 50 000,00 € | TTC: 60 000,00 €
+""", "CH00903": """Page 1/1 — 1 devis au total
+
+• [aaaaaaaa-0000-0000-0000-000000000005] Import Optima - CH00903 (Réf: D0200)
+  Statut: Envoyé
+  Montant: HT: 8 000,00 € | TTC: 9 600,00 €
+"""}
 appels = []
 
 
@@ -49,8 +76,11 @@ def repondre(requete: httpx.Request) -> httpx.Response:
     verif("apiKey=cle-de-banc" in str(requete.url), "la clé part dans l'URL, comme le veut InterFast")
     if corps["method"] == "tools/list":
         res = {"tools": [{"name": "rechercher_chantiers", "description": "Rechercher des chantiers"}]}
+    elif corps["params"]["name"] == "rechercher_devis":
+        ch = corps["params"]["arguments"]["recherche"]
+        res = {"content": [{"type": "text", "text": DEVIS.get(ch, "Aucun devis trouvé pour ces critères.")}]}
     else:
-        verif(corps["params"]["name"] == "rechercher_chantiers", "seul outil appelé : une lecture")
+        verif(corps["params"]["name"] == "rechercher_chantiers", "seuls des outils de lecture")
         res = {"content": [{"type": "text", "text": PAGES[corps["params"]["arguments"]["page"]]}]}
     return httpx.Response(200, text="event: message\ndata: " + json.dumps({"result": res}) + "\n\n")
 
@@ -89,6 +119,19 @@ verif(chs["CH00903"]["chantier"] == "Nouvelle école", "nom vide complété par 
 rhi = c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]
 verif(not any("absent des plannings" in a for p in rhi["pointages"] for a in p["alertes"]),
       "CH saisi à la main, puis trouvé dans InterFast : plus d'alerte")
+
+# ── Vendu HT, par les devis ──
+verif(interfast.montant("454\u202f256,92") == 454256.92, "espace fine et virgule")
+verif(interfast.montant("1.234,50") == 1234.5, "point des milliers")
+verif(interfast.montant("1234.50") == 1234.5, "point décimal")
+c.post("/api/demarrer", json={"personnes": ["JEAN"], "ch": "CH00901"})   # seuls les CH pointés ou au planning sont lus
+r = c.post("/api/interfast/montants").json()
+verif(r["lus"] == 2, "CH00902, terminé et jamais pointé, n'est pas relu")
+verif(r["avec_vendu"] == 1 and sorted(r["sans_devis_signe"]) == ["CH00903"], f"un CH chiffré : {r}")
+pa = c.get("/api/affaires/CH00901").json()
+verif(pa["vendu_ht"] == 13500.5, f"signé + payé, sans l'annulé ni le devis d'un autre CH : {pa['vendu_ht']}")
+verif(pa["devis_refs"] == "D0100, D0101", "les références gardées pour vérifier")
+verif(c.get("/api/affaires/CH00903").json()["vendu_ht"] is None, "devis seulement envoyé : non trouvé, pas 0 €")
 
 # ── Liste des outils ──
 r = c.get("/api/interfast/outils")

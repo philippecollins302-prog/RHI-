@@ -21,7 +21,10 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 3. Décider le chemin des heures (A, B ou C dans `docs/interfast.md`), puis
    l'essayer sur une affaire de test avant `ECRITURE = True`.
 4. Relier chaque personne de RHI à son utilisateur InterFast (id).
-5. Montant vendu par CH (devis signés) et coût horaire : la rentabilité.
+5. ~~Montant vendu par CH et coût horaire~~ — fait : vendu HT lu dans les
+   devis signés/payés dont le titre porte le CH (9 CH sur 33 le 29/09/2026 :
+   la plupart des devis ne portent pas leur CH — à faire corriger à la
+   saisie), coût horaire par personne, part de main-d'œuvre dans le vendu.
 
 ## V2 — menuiserie (Alfa)
 Les plannings MEN n'ont pas la même forme (onglet par année côté pose, pas

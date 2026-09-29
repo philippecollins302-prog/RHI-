@@ -145,7 +145,9 @@ def ajouter_colonne(db, table, col, decl):
 
 AJOUTS = {
     "affaires": [("client", "TEXT NOT NULL DEFAULT ''"), ("titre", "TEXT NOT NULL DEFAULT ''"),
-                 ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER")],
+                 ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER"),
+                 # Vendu HT : devis signés/payés dont le titre porte le CH (NULL = non trouvé).
+                 ("vendu_ht", "REAL"), ("devis_refs", "TEXT NOT NULL DEFAULT ''"), ("vendu_maj", "TEXT")],
     "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
                   ("cout_interfast", "REAL"), ("cout_horaire", "REAL")],
     # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
@@ -316,6 +318,27 @@ def lier(db, nom: str, uid) -> None:
 def utilisateurs_interfast(db) -> list:
     return [dict(r) for r in db.execute(
         "SELECT * FROM utilisateurs_interfast ORDER BY archive, prenom, nom")]
+
+
+def affaires_a_chiffrer(db) -> list:
+    """Les CH dont le vendu vaut d'être relu : au planning ou pointés."""
+    return [r[0] for r in db.execute(
+        """SELECT ch FROM planning WHERE ch IS NOT NULL
+           UNION SELECT ch FROM pointages WHERE ch IS NOT NULL AND annule=0 ORDER BY 1""")]
+
+
+def importer_montants(db, montants: list) -> dict:
+    now = _iso(maintenant())
+    with db:
+        for m in montants:
+            db.execute("""INSERT INTO affaires(ch, source, maj, vendu_ht, devis_refs, vendu_maj)
+                          VALUES (?, 'interfast', ?, ?, ?, ?)
+                          ON CONFLICT(ch) DO UPDATE SET vendu_ht=excluded.vendu_ht,
+                            devis_refs=excluded.devis_refs, vendu_maj=excluded.vendu_maj""",
+                       (m["ch"], now, m["vendu_ht"], ", ".join(m["refs"]), now))
+    trouves = [m["ch"] for m in montants if m["vendu_ht"] is not None]
+    return {"lus": len(montants), "avec_vendu": len(trouves),
+            "sans_devis_signe": [m["ch"] for m in montants if m["vendu_ht"] is None]}
 
 
 def cout_defaut():
@@ -667,6 +690,8 @@ def point_affaire(db, ch: str, a: dt.datetime) -> dict:
         "consomme_pct": round(100 * total / prevues) if prevues else None,
         "par_personne": {k: round(v, 2) for k, v in sorted(par_personne.items(), key=lambda x: -x[1])},
         "cout_main_oeuvre": round(sum(h * (tarif.get(k) or 0) for k, h in par_personne.items()), 2),
+        "vendu_ht": aff["vendu_ht"] if aff else None,
+        "devis_refs": aff["devis_refs"] if aff else "",
         "sans_cout": sorted(k for k in par_personne if not tarif.get(k)),
         "par_semaine": {k: round(v, 2) for k, v in sorted(par_semaine.items())},
         "lignes_prevues": [dict(r) for r in db.execute(
@@ -693,6 +718,9 @@ def affaires_pointees(db, a: dt.datetime) -> list:
         sortie.append({"ch": r["ch"], "chantier": r["chantier"], "conduc": r["conduc"],
                        "source": r["source"], "heures_reelles": round(h, 2),
                        "client": r["client"], "cout_main_oeuvre": round(cout.get(r["ch"], 0), 2),
+                       "vendu_ht": r["vendu_ht"],
+                       "part_mo_pct": (round(100 * cout.get(r["ch"], 0) / r["vendu_ht"], 1)
+                                       if r["vendu_ht"] and cout.get(r["ch"]) else None),
                        "heures_prevues": r["heures_prevues"],
                        "consomme_pct": round(100 * h / r["heures_prevues"]) if r["heures_prevues"] else None})
     return sorted(sortie, key=lambda x: -(x["consomme_pct"] or 0) if x["heures_prevues"] else -x["heures_reelles"])

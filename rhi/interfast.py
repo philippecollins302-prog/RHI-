@@ -200,6 +200,58 @@ async def utilisateurs(transport=None, trou=12, plafond=300) -> list:
     return [trouves[k] for k in sorted(trouves)]
 
 
+# « • [uuid] Import Optima - CH00045 (Réf: D0348)
+#     Statut: Signé / Client: … / Montant: HT: 454 256,92 € | TTC: … »  — 29/09/2026
+_DEVIS = re.compile(r"^\s*•\s*\[([0-9a-f-]+)\]\s*(.*?)\s*\((?:Réf:\s*)?([^)]*)\)\s*$")
+_MONTANT = re.compile(r"HT:\s*([\d\s\u00a0\u202f.,]+?)\s*€")
+VENDU = {"Signé", "Payé"}
+
+
+def montant(texte: str):
+    """« 454 256,92 » (espaces fines ou insécables) → 454256.92."""
+    propre = re.sub(r"[\s\u00a0\u202f]", "", texte)
+    if "," in propre:                      # 1.234,56 ou 1234,56 : la virgule décimale
+        propre = propre.replace(".", "").replace(",", ".")
+    try:
+        return float(propre)
+    except ValueError:
+        return None
+
+
+def lire_devis(texte: str) -> list:
+    fiches = []
+    for ligne in texte.splitlines():
+        m = _DEVIS.match(ligne)
+        if m:
+            fiches.append({"id": m.group(1), "titre": m.group(2), "ref": m.group(3),
+                           "statut": "", "ht": None})
+            continue
+        if not fiches:
+            continue
+        if ligne.strip().startswith("Statut:"):
+            fiches[-1]["statut"] = ligne.split(":", 1)[1].strip()
+        m = _MONTANT.search(ligne)
+        if m and ligne.strip().startswith("Montant"):
+            fiches[-1]["ht"] = montant(m.group(1))
+    return fiches
+
+
+async def devis_de(ch: str, transport=None) -> dict:
+    """Le vendu HT d'un CH : les devis signés ou payés dont le TITRE porte le CH.
+
+    InterFast ne relie pas un devis à un chantier par l'API ; les devis
+    importés d'Optima portent le CH dans leur titre (« Import Optima -
+    CH00045 »). C'est une convention de saisie, pas un lien : un devis sans
+    le CH dans son titre n'est pas compté, et RHI dit « non trouvé » plutôt
+    que 0 € (13 CH sur 33 trouvés le 29/09/2026)."""
+    texte = await outil("rechercher_devis", {"recherche": ch, "taille": 20}, transport)
+    tous = [d for d in lire_devis(texte) if ch in d["titre"]]
+    vendus = [d for d in tous if d["statut"] in VENDU and d["ht"] is not None]
+    return {"ch": ch, "devis": len(tous), "vendus": len(vendus),
+            "vendu_ht": round(sum(d["ht"] for d in vendus), 2) if vendus else None,
+            "refs": [d["ref"] for d in vendus]}
+
+
 async def envoyer_heures(*_args, **_kw):
     if not ECRITURE:
         raise InterFastIndisponible(

@@ -329,6 +329,17 @@ def api_utilisateurs_interfast(c=Depends(db)):
     return base.utilisateurs_interfast(c)
 
 
+@app.post("/api/interfast/montants", dependencies=[Depends(acces_bureau)])
+async def api_interfast_montants(c=Depends(db)):
+    """Relit le vendu HT des CH au planning ou pointés (lecture seule, un CH à la fois)."""
+    t = getattr(app.state, "transport_interfast", None)
+    try:
+        lus = [await interfast.devis_de(ch, t) for ch in base.affaires_a_chiffrer(c)]
+    except interfast.InterFastIndisponible as e:
+        raise HTTPException(503, str(e))
+    return base.importer_montants(c, lus)
+
+
 class Validation(BaseModel):
     personne: str
     semaine: str
