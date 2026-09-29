@@ -135,7 +135,10 @@ def _json_de(texte: str):
     """Le bloc JSON d'une réponse d'appeler_api (« 📥 **GET …** ```json {…} ``` »)."""
     if "(tronqué)" in texte:
         raise Tronque("Réponse InterFast tronquée")
-    debut, fin = texte.find("{"), texte.rfind("}")
+    # Un objet ou une liste : on part du premier des deux qui apparaît.
+    ouvrants = [i for i in (texte.find("{"), texte.find("[")) if i >= 0]
+    debut = min(ouvrants) if ouvrants else -1
+    fin = texte.rfind("}" if debut >= 0 and texte[debut] == "{" else "]")
     if debut < 0 or fin < debut:
         raise InterFastIndisponible(f"Réponse sans JSON : {texte[:120]}")
     return json.loads(texte[debut:fin + 1])
@@ -302,28 +305,55 @@ async def poser_case(case: dict, transport=None) -> str:
     return m.group(0)
 
 
-# « 📋 08:30-10:15 ✅IN00047 2NDE VM AUTOMATISME | CLIENT … | Stéphane »
-# — relevé le 29/09/2026 : le ✅ colle la référence d'une intervention terminée.
-_TERMINEE = re.compile(r"✅\s*(IN\d{4,6})")
+# Les heures saisies à la clôture d'une intervention — relevé du 29/09/2026 :
+#   GET /v1/users/{id}/timesheets/{a}/{m}/{j}/interventions → une entrée par
+#   intervention du jour : "startHour", "endHour" (UTC), "totalWorkedTime" et
+#   "breakTime" (minutes), "interventionId", puis l'intervention entière
+#   (~3 000 caractères). Au-delà de la première, les entrées sont coupées par
+#   le MCP : on lit donc les champs de tête un à un, pas le JSON.
+_ENTREE = re.compile(
+    r'"startHour":\s*"([^"]+)".*?"endHour":\s*"([^"]+)".*?"totalWorkedTime":\s*(\d+)'
+    r'.*?"breakTime":\s*(\d+).*?"interventionId":\s*"?(\d+)', re.S)
 
 
-def lire_terminees(texte: str) -> set:
-    return set(_TERMINEE.findall(texte))
+def lire_journee(texte: str) -> list:
+    """Les entrées lisibles d'une journée, même tronquée. Une entrée dont
+    l'interventionId est coupé n'est pas rendue : mieux vaut une ligne
+    absente qu'une ligne rattachée au hasard."""
+    morceaux = re.split(r'"id":\s*"[0-9a-f-]{36}"', texte)[1:]
+    sortie = []
+    for m in morceaux:
+        e = _ENTREE.search(m)
+        if e:
+            sortie.append({"debut": e.group(1), "fin": e.group(2), "minutes": int(e.group(3)),
+                           "pause": int(e.group(4)), "intervention": int(e.group(5))})
+    return sortie
 
 
-async def terminees(lundi, techniciens: list, transport=None) -> dict:
-    """Les interventions terminées (✅) d'une semaine, lues au planning.
+async def journee(uid: int, jour, transport=None) -> tuple:
+    """(entrées lisibles, coupée ?) — au 29/09/2026, seules les deux
+    premières interventions d'une journée passent la coupure du MCP."""
+    texte = await outil("appeler_api", {
+        "methode": "GET", "chemin": f"/v1/users/{uid}/timesheets/{jour.year}/{jour.month}/{jour.day}/interventions",
+        "intention": "Lecture des heures du jour (RHI)"}, transport)
+    return lire_journee(texte), "(tronqué)" in texte
 
-    Par technicien, en série : une semaine entière dépasse les 4 000
-    caractères du MCP (34 événements le 29/09/2026, coupés au vendredi).
-    Une réponse encore tronquée est signalée : une case absente de la
-    lecture n'est pas une case non terminée."""
-    iso = lundi.isocalendar()
-    semaine = f"{iso[0]}-W{iso[1]:02d}"
-    vues, tronques = set(), []
-    for t in techniciens:
-        texte = await outil("consulter_planning", {"semaine": semaine, "technicien": t}, transport)
-        if "(tronqué)" in texte:
-            tronques.append(t)
-        vues |= lire_terminees(texte)
-    return {"terminees": vues, "tronques": tronques}
+
+async def reference_de(num: int, transport=None):
+    """« IN00047 » d'une intervention, par son id interne (1819630). Le
+    premier "reference" après l'id est celui de l'intervention ; ceux du
+    client et de l'adresse viennent après."""
+    texte = await outil("appeler_api", {"methode": "GET", "chemin": f"/v1/intervention/{num}",
+                                        "params": {"withFollowUp": False},
+                                        "intention": "Lecture d'une intervention (RHI)"}, transport)
+    m = re.search(r'"id":\s*%d\s*,.*?"reference":\s*(\d+)' % num, texte, re.S)
+    return f"IN{int(m.group(1)):05d}" if m else None
+
+
+async def heures_intervention(num: int, transport=None) -> list:
+    """Les heures de chaque technicien sur une intervention terminée (vide
+    tant qu'elle ne l'est pas). Réponse courte : du vrai JSON."""
+    lu = await lire_api(f"/v1/interventions/{num}/timesheets", {}, transport)
+    return [{"user": int(t["user"]), "debut": t["startHour"], "fin": t["endHour"],
+             "minutes": int(t.get("totalWorkedTime") or 0), "pause": int(t.get("breakTime") or 0)}
+            for t in (lu if isinstance(lu, list) else [])]

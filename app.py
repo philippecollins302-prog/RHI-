@@ -451,15 +451,48 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
 
 @app.post("/api/interfast/suivi", dependencies=[Depends(acces_bureau)])
 async def api_suivi(semaine: str, c=Depends(db)):
-    """Relit le planning InterFast (lecture seule) : quelles cases sont terminées."""
-    lundi = _lundi(semaine)
-    d = base.envois(c, lundi, maintenant())
-    techs = sorted({t for x in d["cases"] if x["ref"] for t in x["techniciens"]})
+    """Relit dans InterFast (lecture seule) ce que chaque case posée a reçu
+    à sa clôture : les heures de chaque technicien, face au RHI.
+
+    La case se retrouve par les heures du jour de ses techniciens : chaque
+    entrée donne l'id interne d'une intervention, qu'on traduit en IN…
+    (une lecture par id, gardée pour le reste de la relecture). Une fois
+    trouvé, l'id est gardé sur la case : les relectures suivantes vont
+    droit à ses heures. Pas d'entrée : la case n'est pas encore terminée.
+    Tout en série — le MCP se trompe sous les appels parallèles."""
+    t = getattr(app.state, "transport_interfast", None)
+    jours, refs = {}, {}
+    terminees, a_terminer, illisibles = [], [], []
     try:
-        lu = await interfast.terminees(lundi, techs, getattr(app.state, "transport_interfast", None))
+        for case in base.cases_posees(c, _lundi(semaine)):
+            num, coupee = case["num"], False
+            for uid in ([] if num else case["users"]):
+                cle = (uid, case["jour"])
+                if cle not in jours:
+                    jours[cle] = await interfast.journee(uid, case["jour"], t)
+                coupee = coupee or jours[cle][1]
+                for e in jours[cle][0]:
+                    n = e["intervention"]
+                    if n not in refs:
+                        refs[n] = await interfast.reference_de(n, t)
+                    if refs[n] == case["ref"]:
+                        num = n
+                        break
+                if num:
+                    break
+            if not num and coupee:
+                # Introuvable dans des journées coupées : peut-être terminée,
+                # au-delà de ce que le MCP laisse lire. On ne conclut pas.
+                illisibles.append(case["ref"])
+                continue
+            entrees = await interfast.heures_intervention(num, t) if num else []
+            base.enregistrer_suivi(c, case["ref"], num, entrees)
+            (terminees if entrees else a_terminer).append(case["ref"])
     except interfast.InterFastIndisponible as err:
         raise HTTPException(503, str(err))
-    return base.cases_relues(c, lundi, lu["terminees"]) | {"tronques": lu["tronques"]}
+    d = base.envois(c, _lundi(semaine), maintenant())
+    return {"terminees": terminees, "a_terminer": a_terminer, "illisibles": illisibles,
+            "ecarts": [x["ref"] for x in d["cases"] if x["etat"] == "écart"]}
 
 
 class Validation(BaseModel):

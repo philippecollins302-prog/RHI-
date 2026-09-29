@@ -315,13 +315,14 @@ async function ongletPersonnes() {
 async function ongletEnvois() {
   const d = await api('/api/interfast/envois?semaine=' + vue.semaine);
   const cl = {'prête': 'p-vert', 'bloquée': 'p-rouge', 'en attente': 'p-ambre', 'posée': 'p-ambre',
-    'à compléter': 'p-rouge', 'terminée': 'p-vert'};
+    'à compléter': 'p-rouge', 'terminée': 'p-vert', 'écart': 'p-rouge'};
   const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const ligneEquipe = (e) => `<tr>
       <td>${esc(e.technicien)}${e.compte ? '' : ' <span class="pastille p-rouge">sans compte</span>'}
         ${e.valide ? '' : ' <span class="pastille p-ambre">RHI non validé</span>'}</td>
       <td>${esc(e.debut)}</td><td>${esc(e.fin)}</td><td>${esc(e.pause || '—')}</td>
-      <td class="n">${heures(e.heures)}</td></tr>`;
+      <td class="n">${heures(e.heures)}</td>
+      <td class="n">${e.interfast === null ? '—' : heures(e.interfast)}${e.ecart ? ' <span class="pastille p-rouge">écart</span>' : ''}</td></tr>`;
   $('#vue').innerHTML = choixSemaine() + `
     <div class="carte">
       <p>Les heures entrent dans InterFast comme des <strong>cases du planning</strong> : une par CH et par jour,
@@ -333,9 +334,10 @@ async function ongletEnvois() {
       <p><span class="pastille p-vert">${esc(d.pretes)} prêtes · ${heures(d.heures_pretes) || '0h'}</span>
         <span class="pastille p-ambre">${esc(d.en_attente)} en attente de validation</span>
         <span class="pastille p-rouge">${esc(d.bloquees)} bloquées</span>
-        <span class="pastille">${esc(d.posees)} posées · ${esc(d.terminees)} terminées</span></p>
+        <span class="pastille">${esc(d.posees)} posées · ${esc(d.terminees)} terminées</span>
+        ${d.ecarts ? `<span class="pastille p-rouge">${esc(d.ecarts)} avec un écart d'heures</span>` : ''}</p>
       <p>${d.ecriture && d.pretes ? `<button class="btn" id="poser">Poser les ${esc(d.pretes)} cases prêtes dans InterFast</button>` : ''}
-        ${d.posees + d.terminees ? '<button class="btn" id="relire">Relire le planning InterFast (✅ terminées)</button>' : ''}
+        ${d.posees + d.terminees + d.ecarts ? '<button class="btn" id="relire">Relire les heures reçues par InterFast</button>' : ''}
         <span id="retour-envoi"></span></p>
     </div>` + (d.cases.length ? d.cases.map((x) => `
     <div class="carte">
@@ -347,7 +349,7 @@ async function ongletEnvois() {
       ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
       ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>` : ''}
       <div class="defile"><table>
-        <tr><th>Pour terminer la case</th><th>Début</th><th>Fin</th><th>Pause</th><th class="n">Heures</th></tr>
+        <tr><th>Pour terminer la case</th><th>Début</th><th>Fin</th><th>Pause</th><th class="n">Heures RHI</th><th class="n">Reçu par InterFast</th></tr>
         ${x.equipe.map(ligneEquipe).join('')}
       </table></div>
     </div>`).join('') : '<div class="rien">Aucun pointage sur un CH cette semaine.</div>');
@@ -364,11 +366,12 @@ async function ongletEnvois() {
     } catch (e) { retour.textContent = e.message; }
   });
   bouton('relire', async () => {
-    retour.textContent = 'Lecture du planning InterFast…';
+    retour.textContent = 'Lecture des heures dans InterFast, une case à la fois (une à deux minutes)…';
     try {
       const r = await api('/api/interfast/suivi?semaine=' + vue.semaine, {method: 'POST'});
-      dire(`${r.terminees.length} terminées, ${r.a_terminer.length} à terminer dans InterFast` +
-        (r.tronques.length ? ' (lecture incomplète pour ' + r.tronques.join(', ') + ')' : ''));
+      dire(`${r.terminees.length} terminées, ${r.a_terminer.length} à terminer dans InterFast, ` +
+        `${r.ecarts.length} avec un écart d'heures` +
+        (r.illisibles.length ? ', illisibles (trop d\'interventions ce jour-là) : ' + r.illisibles.join(', ') : ''));
       afficher();
     } catch (e) { retour.textContent = e.message; }
   });

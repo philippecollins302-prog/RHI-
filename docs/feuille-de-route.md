@@ -22,7 +22,8 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 2. ~~Liste des CH lue dans InterFast~~ — fait (lecture seule).
 3. ~~Décider le chemin des heures~~ — des cases dans le planning InterFast,
    terminées puis validées là-bas (29/09/2026). Écrit et tenu par un banc :
-   pose, relecture des ✅, verrou de dévalidation. Reste l'essai sur une
+   pose, relecture des heures reçues à la clôture (écarts au RHI), verrou
+   de dévalidation. Reste l'essai sur une
    affaire de test avant `ECRITURE = True`.
 4. Relier chaque personne de RHI à son utilisateur InterFast (id).
 5. ~~Montant vendu par CH et coût horaire~~ — fait : vendu HT lu dans les

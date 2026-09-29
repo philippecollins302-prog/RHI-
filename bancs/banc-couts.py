@@ -210,6 +210,42 @@ verif(base.duree_texte(4.5) == "4h30" and base.duree_texte(2) == "2h" and base.d
 # ── Écriture branchée, sur un faux InterFast ──
 from rhi import interfast  # noqa: E402
 ecrits = []
+terminee = {"oui": False}
+
+
+def entree(num, debut, fin_, minutes):
+    """Une entrée de /v1/users/…/timesheets/…/interventions, forme du 29/09/2026."""
+    return ('{"id": "0ee5f4cc-f830-4a41-a66f-%012d", "date": "2026-09-27T22:00:00.000Z", '
+            '"startHour": "%s", "endHour": "%s", "totalWorkedTime": %d, "breakTime": 0, "cost": 0, '
+            '"user": "101", "interventionId": "%d", "intervention": {"id": %d, "finished": true, '
+            '"reference": 7, "title": "x", "client": {"id": 1, "reference": 1797}}}'
+            % (num, debut, fin_, minutes, num, num))
+
+
+def lecture(chemin):
+    if "/timesheets/2026/" in chemin:
+        if not terminee["oui"]:
+            return "📥 **GET**\n```json\n[]\n```"
+        # Deux interventions ce jour-là, la nôtre en second, coupée comme le fait le MCP.
+        corps = "[" + entree(999001, "2026-09-28T04:00:00.000Z", "2026-09-28T05:00:00.000Z", 60) + ", " + \
+            entree(555001, "2026-09-28T05:00:00.000Z", "2026-09-28T10:00:00.000Z", 300)[:260]
+        return "📥 **GET**\n```json\n" + corps + "\n… (tronqué)\n```"
+    if chemin.startswith("/v1/intervention/"):
+        n = int(chemin.rsplit("/", 1)[1])
+        ref = {999001: 99, 555001: 321}.get(n, 7)
+        return ('📥 **GET**\n```json\n{"id": %d, "archived": false, "finished": true, "reference": %d, '
+                '"client": {"id": 5, "reference": 1797}}\n```' % (n, ref))
+    if chemin == "/v1/interventions/555001/timesheets":
+        ts = [{"startHour": "2026-09-28T05:00:00.000Z", "endHour": "2026-09-28T10:00:00.000Z",
+               "breakTime": 0, "totalWorkedTime": 300, "user": "101"},
+              {"startHour": "2026-09-28T05:00:00.000Z", "endHour": "2026-09-28T09:00:00.000Z",
+               "breakTime": 0, "totalWorkedTime": 240, "user": "102"},
+              {"startHour": "2026-09-28T05:00:00.000Z", "endHour": "2026-09-28T08:00:00.000Z",
+               "breakTime": 0, "totalWorkedTime": 180, "user": "105"}]
+        return "📥 **GET**\n```json\n" + json.dumps(ts) + "\n```"
+    raise AssertionError(f"lecture inattendue : {chemin}")
+
+
 reponses = {"planifier_intervention": "📋 Récapitulatif … Confirmez avec confirmer_action.",
             "confirmer_action": "✅ Intervention IN00321 planifiée le 28/09/2026."}
 
@@ -218,9 +254,8 @@ def mcp_ecriture(req: httpx.Request) -> httpx.Response:
     corps = json.loads(req.content)
     nom, args = corps["params"]["name"], corps["params"]["arguments"]
     ecrits.append((nom, args))
-    if nom == "consulter_planning":
-        texte = ("📅 **Planning**\n  📋 07:00-12:00 ✅IN00321 RHI · CH00901 | BAILLEUR SUD | Paul\n"
-                 "  📋 07:00-08:00 IN00999 autre | X | Paul")
+    if nom == "appeler_api":
+        texte = lecture(args["chemin"])
     else:
         texte = reponses[nom]
     return httpx.Response(200, text="data: " + json.dumps({"result": {"content": [{"type": "text", "text": texte}]}}))
@@ -247,14 +282,40 @@ try:
     r = c.delete("/api/validations?personne=ZOE&semaine=2026-09-28")
     verif(r.status_code == 409 and "IN00321" in r.json()["detail"],
           "on ne dévalide pas une semaine déjà posée : la correction n'arriverait jamais dans InterFast")
-    # La relecture du planning : le ✅ dit que la case est terminée.
+    # La relecture : tant que la case n'est pas terminée, InterFast n'a aucune heure.
     r = c.post("/api/interfast/suivi?semaine=2026-09-28")
-    verif(r.status_code == 200 and r.json()["terminees"] == ["IN00321"], f"relue terminée : {r.text}")
-    semaines = {a["semaine"] for n, a in ecrits if n == "consulter_planning"}
-    verif(semaines == {"2026-W40"} and {a["technicien"] for n, a in ecrits if n == "consulter_planning"}
-          == {"Paul Martin", "Jean Durand", "Zoe Aubert"}, "lue par technicien, semaine ISO")
+    verif(r.status_code == 200 and r.json()["a_terminer"] == ["IN00321"], f"pas encore terminée : {r.text}")
+    # Terminée dans InterFast : Paul 5 h et Jean 4 h comme au RHI, Zoé 3 h au lieu de 4.
+    terminee["oui"] = True
+    ecrits.clear()
+    r = c.post("/api/interfast/suivi?semaine=2026-09-28")
+    verif(r.json()["terminees"] == ["IN00321"] and r.json()["ecarts"] == ["IN00321"], f"relue : {r.text}")
+    chemins = [a["chemin"] for n, a in ecrits if n == "appeler_api"]
+    verif("/v1/intervention/999001" in chemins and "/v1/intervention/555001" in chemins,
+          "la case se retrouve par l'id interne, malgré la coupure du MCP sur la seconde entrée")
+    verif(all("/v1/users/103" not in x and "/v1/users/None" not in x for x in chemins),
+          "on ne lit que les comptes de ceux qui portent la case")
     c28 = {x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-09-28").json()["cases"]}["CH00901|2026-09-28"]
-    verif(c28["etat"] == "terminée", "l'onglet le montre")
+    eq = {e["personne"]: e for e in c28["equipe"]}
+    verif(c28["etat"] == "écart", f"l'onglet montre l'écart : {c28['etat']}")
+    verif((eq["PAUL"]["interfast"], eq["PAUL"]["ecart"], eq["ZOE"]["interfast"], eq["ZOE"]["ecart"])
+          == (5.0, False, 3.0, True), f"Zoé : 3 h reçues pour 4 h pointées : {eq['ZOE']}")
+    verif(eq["LUC"]["ecart"] is False, "celui qui n'a pas de compte n'est pas un écart (il est déjà nommé)")
+    ecrits.clear()
+    c.post("/api/interfast/suivi?semaine=2026-09-28")
+    verif([a["chemin"] for n, a in ecrits] == ["/v1/interventions/555001/timesheets"],
+          f"l'id gardé : la relecture suivante va droit aux heures : {ecrits}")
+    verif(interfast.lire_journee('"id": "x"') == [], "rien de lisible : rien d'inventé")
+    # Notre case au-delà de la coupure : illisible, pas « à terminer ».
+    with base.connexion(appli.app.state.chemin_base) as b2:
+        b2.execute("UPDATE cases_interfast SET num=NULL, terminee=0")
+    vraie = lecture
+    lecture = lambda ch: vraie(ch).replace("555001", "555999") if "/timesheets/2026/" in ch else vraie(ch)  # noqa: E731
+    r = c.post("/api/interfast/suivi?semaine=2026-09-28").json()
+    verif(r["illisibles"] == ["IN00321"] and r["a_terminer"] == [], f"coupée : on ne conclut pas : {r}")
+    lecture = vraie
+    c.post("/api/interfast/suivi?semaine=2026-09-28")
+    verif(interfast._json_de('📥 **GET**\n```json\n[{"a": 1}]\n```') == [{"a": 1}], "une liste se lit en liste")
     # Un refus d'InterFast s'arrête au premier temps, sans confirmer.
     reponses["planifier_intervention"] = "❌ Chantier introuvable pour ce client."
     base.importer_chantiers(base.connexion(appli.app.state.chemin_base),
@@ -274,6 +335,5 @@ try:
     verif(ecrits == [], "une case peut-être créée n'est pas renvoyée (pas de doublon)")
 finally:
     interfast.ECRITURE = False
-verif(interfast.terminees.__doc__ and interfast.lire_terminees("✅ Occupé | X") == set(), "« ✅ Occupé » n'est pas une case")
 
 fin("banc-couts")

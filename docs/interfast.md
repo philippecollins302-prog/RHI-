@@ -64,6 +64,18 @@ Elles sont remplies par l'application mobile InterFast des techniciens
 (démarrer / arrêter sur une intervention). L'API générique (`appeler_api`)
 n'expose aucun POST de temps.
 
+Forme relevée le 29/09/2026, sur une intervention terminée :
+
+```
+{"startHour": "2026-09-28T06:30:00.000Z", "endHour": "2026-09-28T08:15:00.000Z",
+ "breakTime": 0, "totalWorkedTime": 105, "user": "23709"}
+```
+
+Les heures sont en UTC et les durées en minutes. La version par jour
+ajoute `cost` (73,5 € pour 105 min : ce technicien-là a un coût horaire,
+42 €/h), `interventionId` et l'intervention entière. Aucun champ ne dit si
+la feuille de temps est validée.
+
 ## Les trois chemins possibles — à décider
 
 | | Chemin | Pour | Contre |
@@ -100,9 +112,17 @@ InterFast* :
   Un refus (« ❌ ») s'arrête avant la confirmation. Une confirmation sans
   référence est marquée « À VÉRIFIER » et n'est pas renvoyée. Répond 403 tant
   que `ECRITURE = False` ;
-- **Relire** (`POST /api/interfast/suivi`) : le ✅ du planning InterFast
-  (`consulter_planning`, technicien par technicien à cause de la coupure à
-  4 000 caractères) marque les cases terminées ;
+- **Relire** (`POST /api/interfast/suivi`), en lecture seule : ce que
+  chaque case posée a **reçu à sa clôture**, technicien par technicien, face
+  au RHI. Un écart de plus de 15 min est signalé : c'est une saisie à
+  reprendre dans InterFast. La case se retrouve par les heures du jour de ses
+  techniciens, qui donnent l'id interne de chaque intervention (1819630),
+  traduit en IN… par `/v1/intervention/{id}`. L'id est ensuite gardé
+  (`cases_interfast.num`), et les relectures suivantes vont droit à
+  `/v1/interventions/{id}/timesheets`. Limite : la coupure du MCP ne laisse
+  lire que les **deux premières** interventions d'une journée. Une case
+  introuvable dans une journée coupée est dite « illisible », pas « à
+  terminer » ;
 - une semaine dont une case est posée **ne se dévalide plus** (409) : une
   correction faite ensuite n'arriverait jamais dans InterFast. On corrige
   d'abord la case dans InterFast.

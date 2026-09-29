@@ -128,7 +128,17 @@ CREATE TABLE IF NOT EXISTS cases_interfast (
   posee_le TEXT NOT NULL,
   terminee INTEGER NOT NULL DEFAULT 0,   -- le ✅ du planning InterFast, relu
   relue_le TEXT,
+  num INTEGER,                     -- id interne InterFast (1819630), trouvé à la relecture
   PRIMARY KEY (ch, jour)
+);
+CREATE TABLE IF NOT EXISTS heures_interfast (
+  ref TEXT NOT NULL,               -- la case (IN00123)
+  user_id INTEGER NOT NULL,
+  debut TEXT NOT NULL,             -- heure de Paris, saisie à la clôture
+  fin TEXT NOT NULL,
+  minutes INTEGER NOT NULL,
+  pause INTEGER NOT NULL,
+  PRIMARY KEY (ref, user_id)
 );
 CREATE INDEX IF NOT EXISTS pointages_personne ON pointages(personne, debut);
 CREATE INDEX IF NOT EXISTS pointages_ch ON pointages(ch);
@@ -189,6 +199,7 @@ AJOUTS = {
     # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
     # ligne, rejoué au retour du réseau.
     "pointages": [("recu", "TEXT")],
+    "cases_interfast": [("num", "INTEGER")],
     # Pour la marche en avant : semaines de fab et commentaire du plan de charge.
     "lignes_prevues": [("semaines", "TEXT NOT NULL DEFAULT ''"), ("commentaire", "TEXT NOT NULL DEFAULT ''"),
                        ("chantier", "TEXT NOT NULL DEFAULT ''")],
@@ -1125,6 +1136,7 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
     affaires = {r["ch"]: dict(r) for r in db.execute("SELECT * FROM affaires")}
     posees = {(r["ch"], r["jour"]): dict(r) for r in db.execute(
         "SELECT * FROM cases_interfast WHERE jour >= ? AND jour < ?", (lundi.isoformat(), fin_sem.isoformat()))}
+    recues = {(r["ref"], r["user_id"]): dict(r) for r in db.execute("SELECT * FROM heures_interfast")}
     cases = {}
     for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND ch IS NOT NULL
                            AND fin IS NOT NULL AND debut >= ? AND debut < ? ORDER BY debut""",
@@ -1172,9 +1184,19 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
             blocages.append(f"pointage de plus de {LONG_H} h ou sur deux jours ({', '.join(douteux)}) : à corriger")
         attente = [e["personne"] for e in equipe if not e["valide"]]
         pose = posees.get((ch, jour))
+        # Ce qu'InterFast a reçu en clôture, face au RHI : un écart de plus
+        # d'un quart d'heure est une saisie à reprendre dans InterFast.
+        for e in equipe:
+            uid = gens.get(e["personne"], {}).get("interfast_user_id")
+            recu = recues.get((pose["ref"], uid)) if pose and uid else None
+            e["interfast"] = round(recu["minutes"] / 60, 2) if recu else None
+            e["ecart"] = bool(pose and pose["terminee"] and e["valide"] and e["compte"] and (
+                recu is None or abs(recu["minutes"] - e["heures"] * 60) > ECART_MIN))
         a_ajouter = [e["technicien"] for e in equipe if e["valide"] and not e["envoye"]] if pose else []
         if pose:
             etat = "à compléter" if a_ajouter else ("terminée" if pose["terminee"] else "posée")
+            if etat == "terminée" and any(e["ecart"] for e in equipe):
+                etat = "écart"
         elif attente:
             etat = "en attente"
         else:
@@ -1194,6 +1216,7 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
     return {"lundi": lundi.isoformat(), "cases": sortie, "personnes_validees": sorted(valides),
             "pretes": compte("prête"), "bloquees": compte("bloquée"), "en_attente": compte("en attente"),
             "posees": compte("posée") + compte("à compléter"), "terminees": compte("terminée"),
+            "ecarts": compte("écart"),
             "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prête"), 2)}
 
 
@@ -1209,18 +1232,45 @@ def case_posee(db, case: dict, ref: str) -> None:
         db.executemany("UPDATE pointages SET interfast=? WHERE id=?", [(ref, i) for i in ids])
 
 
-def cases_relues(db, lundi: dt.date, terminees: set) -> dict:
-    """Le planning InterFast relu : les cases de la semaine qui portent le ✅."""
+ECART_MIN = 15
+
+
+def cases_posees(db, lundi: dt.date) -> list:
+    """Les cases posées d'une semaine, avec les comptes InterFast de ceux
+    qu'elles portent — de quoi aller relire leurs heures."""
     fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
-    lignes = db.execute("SELECT ref FROM cases_interfast WHERE jour >= ? AND jour < ?",
-                        (lundi.isoformat(), fin_sem)).fetchall()
+    sortie = []
+    for r in db.execute("""SELECT * FROM cases_interfast WHERE jour >= ? AND jour < ?
+                           AND ref LIKE 'IN%' ORDER BY jour, ch""", (lundi.isoformat(), fin_sem)):
+        users = [u[0] for u in db.execute(
+            """SELECT DISTINCT pe.interfast_user_id FROM pointages po JOIN personnes pe ON pe.nom = po.personne
+               WHERE po.interfast=? AND pe.interfast_user_id IS NOT NULL""", (r["ref"],))]
+        sortie.append({"ref": r["ref"], "num": r["num"], "ch": r["ch"],
+                       "jour": dt.date.fromisoformat(r["jour"]), "users": users})
+    return sortie
+
+
+def _paris(iso_utc: str) -> str:
+    t = dt.datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+    return _iso(t.astimezone(PARIS).replace(tzinfo=None))
+
+
+def enregistrer_suivi(db, ref: str, num, entrees: list) -> None:
+    """Ce qu'InterFast a reçu à la clôture de la case. Aucune entrée : la
+    case n'est pas encore terminée."""
+    par_user = {}
+    for e in entrees:
+        u = par_user.setdefault(e["user"], {"debut": _paris(e["debut"]), "fin": _paris(e["fin"]),
+                                            "minutes": 0, "pause": 0})
+        u["debut"], u["fin"] = min(u["debut"], _paris(e["debut"])), max(u["fin"], _paris(e["fin"]))
+        u["minutes"] += e["minutes"]
+        u["pause"] += e["pause"]
     with db:
-        for r in lignes:
-            db.execute("UPDATE cases_interfast SET terminee=?, relue_le=? WHERE ref=?",
-                       (1 if r["ref"] in terminees else 0, _iso(maintenant()), r["ref"]))
-    refs = [r["ref"] for r in lignes]
-    return {"cases": len(refs), "terminees": sorted(x for x in refs if x in terminees),
-            "a_terminer": sorted(x for x in refs if x not in terminees)}
+        db.execute("UPDATE cases_interfast SET num=COALESCE(?, num), terminee=?, relue_le=? WHERE ref=?",
+                   (num, 1 if par_user else 0, _iso(maintenant()), ref))
+        db.execute("DELETE FROM heures_interfast WHERE ref=?", (ref,))
+        db.executemany("INSERT INTO heures_interfast VALUES (?,?,?,?,?,?)",
+                       [(ref, uid, u["debut"], u["fin"], u["minutes"], u["pause"]) for uid, u in par_user.items()])
 
 
 def refs_semaine(db, personne: str, lundi: dt.date) -> list:
