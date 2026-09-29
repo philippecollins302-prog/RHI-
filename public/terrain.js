@@ -263,7 +263,7 @@ async function demarrer(quoi) {
 async function arreter() {
   geste('/api/arreter', {personnes: etat.personnes}, []);
   dire('■ Arrêté');
-  if (etat.mode === 'atelier') { vider(); accueil(); return; }
+  if (etat.mode === 'atelier') { await vider(); accueil(); return; }
   await rafraichir();
 }
 

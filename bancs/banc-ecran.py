@@ -49,5 +49,6 @@ for src in re.findall(r'(?:src|href)="([^"#:]+)"', index):
     verif("/" + src in coquille, f"sw.js : {src} manque à la coquille hors ligne")
 verif("/" in coquille, "sw.js : la page elle-même est dans la coquille")
 verif("startsWith('/api/')" in sw, "sw.js : l'API ne passe jamais par le cache")
+verif("url.pathname === '/'" in sw, "sw.js : hors ligne, seule la tablette retombe sur la page de la tablette")
 
 fin("banc-ecran")

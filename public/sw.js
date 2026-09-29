@@ -23,5 +23,9 @@ self.addEventListener('fetch', (e) => {
         if (r.ok) { const copie = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copie)); }
         return r;
       })
-      .catch(() => caches.match(e.request).then((r) => r || caches.match('/'))));
+      // Hors ligne : la copie gardée ; à défaut, la page de la tablette —
+      // mais seulement pour elle (le bureau hors ligne ne doit pas s'ouvrir
+      // en tablette).
+      .catch(() => caches.match(e.request).then((r) => r ||
+        (e.request.mode === 'navigate' && url.pathname === '/' ? caches.match('/') : Response.error()))));
 });
