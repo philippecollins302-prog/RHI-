@@ -8,21 +8,24 @@ Deux écrans :
   /bureau   le RHI de chacun (lundi matin), le point d'affaire, l'import des
             plannings, les corrections.
 """
+import collections
 import csv
+import hmac
 import datetime as dt
 import io
 import os
 import tempfile
 import time
+from typing import Annotated
 from pathlib import Path
 
 import asyncio
 import contextlib
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from rhi import base, courrier, interfast, lecture
 
@@ -111,41 +114,112 @@ def maintenant() -> dt.datetime:
 #    Le terrain ne voit que le pointage ; le bureau voit tout. Pas de mot de
 #    passe par ouvrier : une tablette sur pied, des gants, 7 h du matin.
 
-def _codes(*noms):
-    return {os.getenv(n) for n in noms if os.getenv(n)}
+def en_production() -> bool:
+    """Clever Cloud pose CC_APP_ID sur ses machines ; RHI_PRODUCTION pour ailleurs."""
+    return bool(os.getenv("CC_APP_ID") or os.getenv("RHI_PRODUCTION"))
 
 
-def acces_terrain(x_rhi_code: str = Header(default="")):
-    codes = _codes("RHI_CODE_TERRAIN", "RHI_CODE_BUREAU")
-    if codes and x_rhi_code not in codes:
-        raise HTTPException(401, "Code d'accès")
+LONGUEUR_BUREAU = 12
 
 
-def acces_bureau(x_rhi_code: str = Header(default="")):
-    codes = _codes("RHI_CODE_BUREAU")
-    if codes and x_rhi_code not in codes:
-        raise HTTPException(401, "Code bureau")
+def reglage_des_codes() -> str | None:
+    """Ce qui cloche dans les codes, ou None. Échoue FERMÉ : un seul code
+    posé ouvrait tout le bureau (sauvegarde de la base comprise) à Internet
+    si l'autre variable manquait — revue de sécurité du 29/09/2026."""
+    t, b = os.getenv("RHI_CODE_TERRAIN", ""), os.getenv("RHI_CODE_BUREAU", "")
+    if not t and not b:
+        return "aucun code d'accès" if en_production() else None
+    if not b:
+        return "RHI_CODE_BUREAU absent"
+    if not t:
+        return "RHI_CODE_TERRAIN absent"
+    if t == b:
+        return "codes terrain et bureau identiques"
+    if en_production() and len(b) < LONGUEUR_BUREAU:
+        return f"code bureau trop court ({LONGUEUR_BUREAU} caractères au moins)"
+    return None
+
+
+# Au-delà de 10 codes faux en une minute depuis la même adresse : 429 pendant
+# une minute. Sans frein, un code se devinait en quelques heures.
+ECHECS: dict = collections.defaultdict(collections.deque)
+FENETRE_S, ECHECS_MAX = 60, 10
+
+
+def _adresse(request: Request) -> str:
+    # Derrière le proxy de Clever, la dernière adresse de X-Forwarded-For est
+    # celle que le proxy a vue ; les précédentes, le client peut les inventer.
+    xff = request.headers.get("x-forwarded-for", "")
+    return xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "?")
+
+
+def _verifier(request: Request, donne: str, admis: list, quoi: str):
+    ip, now = _adresse(request), time.monotonic()
+    q = ECHECS[ip]
+    while q and now - q[0] > FENETRE_S:
+        q.popleft()
+    if len(q) >= ECHECS_MAX:
+        raise HTTPException(429, "Trop de codes faux : attendre une minute")
+    if any(hmac.compare_digest(donne.encode(), a.encode()) for a in admis):
+        if not q:
+            ECHECS.pop(ip, None)
+        return
+    q.append(now)
+    print(f"code {quoi} refusé depuis {ip}")
+    raise HTTPException(401, f"Code {quoi}")
+
+
+def acces_terrain(request: Request, x_rhi_code: str = Header(default="")):
+    probleme = reglage_des_codes()
+    if probleme:
+        raise HTTPException(503, f"Accès fermé, réglage incomplet : {probleme}")
+    t, b = os.getenv("RHI_CODE_TERRAIN", ""), os.getenv("RHI_CODE_BUREAU", "")
+    if t or b:
+        _verifier(request, x_rhi_code, [x for x in (t, b) if x], "d'accès")
+
+
+def acces_bureau(request: Request, x_rhi_code: str = Header(default="")):
+    probleme = reglage_des_codes()
+    if probleme:
+        raise HTTPException(503, f"Accès fermé, réglage incomplet : {probleme}")
+    b = os.getenv("RHI_CODE_BUREAU", "")
+    if b:
+        _verifier(request, x_rhi_code, [b], "bureau")
+
+
+def _jour(texte: str | None) -> dt.date:
+    """Une date AAAA-MM-JJ venue d'un paramètre : illisible = 422, pas 500."""
+    if not texte:
+        return maintenant().date()
+    try:
+        return dt.date.fromisoformat(texte[:10])
+    except ValueError:
+        raise HTTPException(422, "Date illisible (AAAA-MM-JJ)")
 
 
 def _lundi(texte: str | None) -> dt.date:
-    d = dt.date.fromisoformat(texte) if texte else maintenant().date()
+    d = _jour(texte)
     return d - dt.timedelta(days=d.weekday())
 
 
 # ═══════════════════════ TERRAIN ═══════════════════════
 
+# Bornes : un chef et son équipe, pas cent mille noms (revue du 29/09/2026).
+Nom = Annotated[str, Field(max_length=60)]
+
+
 class Demarrage(BaseModel):
-    personnes: list[str]
-    ch: str | None = None
-    motif: str | None = None
-    libelle: str = ""
-    appareil: str = ""
-    quand: str | None = None   # heure du geste, si pointé hors ligne
+    personnes: list[Nom] = Field(max_length=6)
+    ch: str | None = Field(default=None, max_length=20)
+    motif: str | None = Field(default=None, max_length=30)
+    libelle: str = Field(default="", max_length=200)
+    appareil: str = Field(default="", max_length=60)
+    quand: str | None = Field(default=None, max_length=40)   # heure du geste, si pointé hors ligne
 
 
 class Arret(BaseModel):
-    personnes: list[str]
-    quand: str | None = None
+    personnes: list[Nom] = Field(max_length=6)
+    quand: str | None = Field(default=None, max_length=40)
 
 
 # Un geste rejoué plus de 72 h après : le bureau le saisit à la main, en
@@ -177,10 +251,7 @@ def api_config():
     return {"entreprise": e, "nom": lecture.ENTREPRISES[e]}
 
 
-@app.get("/api/sante")
-def sante(c=Depends(db)):
-    """Ce qu'on vérifie après chaque déploiement (docs/deploiement.md) : la
-    base doit être dans donnees/ (le bucket), en journal « delete »."""
+def _etat(c) -> dict:
     chemin = Path(getattr(app.state, "chemin_base", None) or base.chemin_base()).resolve()
     return {"ok": True, "heure": maintenant().isoformat(), "interfast_ecriture": interfast.ECRITURE,
             "entreprise": interfast.entreprise(),
@@ -188,9 +259,28 @@ def sante(c=Depends(db)):
                      "journal": c.execute("PRAGMA journal_mode").fetchone()[0],
                      "inscriptible": os.access(chemin.parent, os.W_OK)},
             "cle_interfast": bool(interfast.cle()),
-            "codes_acces": bool(os.getenv("RHI_CODE_TERRAIN")) and bool(os.getenv("RHI_CODE_BUREAU")),
+            "codes_acces": reglage_des_codes() or "ok",
             "courrier": {"smtp": bool(courrier.reglage()["host"] and courrier.reglage()["user"]),
                          "destinataires": len(courrier.destinataires())}}
+
+
+@app.get("/api/sante")
+def sante(c=Depends(db)):
+    """Public, donc muet : « prêt » ou non. Le détail (clé, codes, courrier)
+    renseignait un visiteur sans code ; il est derrière le code bureau
+    (/api/sante/detail). Un code mal réglé ferme l'accès, et « codes » le dit :
+    c'est la seule chose qu'on ne peut pas lire autrement à ce moment-là."""
+    e = _etat(c)
+    pret = (e["codes_acces"] == "ok" and e["base"]["journal"] == "delete" and e["base"]["inscriptible"]
+            and (e["base"]["dans_donnees"] or not en_production()))
+    return {"ok": True, "heure": e["heure"], "pret": pret, "codes": "ok" if e["codes_acces"] == "ok" else "à régler"}
+
+
+@app.get("/api/sante/detail", dependencies=[Depends(acces_bureau)])
+def sante_detail(c=Depends(db)):
+    """Ce qu'on vérifie après chaque déploiement (docs/deploiement.md) : la
+    base doit être dans donnees/ (le bucket), en journal « delete »."""
+    return _etat(c)
 
 
 @app.get("/api/personnes", dependencies=[Depends(acces_terrain)])
@@ -200,7 +290,7 @@ def api_personnes(equipe: str | None = None, c=Depends(db)):
 
 @app.get("/api/menu", dependencies=[Depends(acces_terrain)])
 def api_menu(personne: str, jour: str | None = None, c=Depends(db)):
-    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    j = _jour(jour)
     return base.menu(c, personne, j) | {"mes_heures": base.mes_heures(c, personne.upper(), j, maintenant())}
 
 
@@ -224,6 +314,8 @@ def api_demarrer(d: Demarrage, c=Depends(db)):
         ids = base.demarrer(c, [p.strip().upper() for p in d.personnes if p.strip()],
                             _quand(d.quand), ch=ch, motif=d.motif, libelle=d.libelle,
                             appareil=d.appareil, recu=maintenant())
+    except base.SemaineValidee as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"ids": ids, "pointages": base.en_cours(c)}
@@ -237,21 +329,27 @@ def api_arreter(a: Arret, c=Depends(db)):
 
 @app.get("/api/ecran", dependencies=[Depends(acces_terrain)])
 def api_ecran(jour: str | None = None, c=Depends(db)):
-    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    j = _jour(jour)
     return base.ecran(c, j) | {"maintenant_ms": int(time.time() * 1000)}
 
 
 # ═══════════════════════ BUREAU ═══════════════════════
 
+TAILLE_MAX = 20_000_000   # les vrais plannings font moins de 2 Mo
+
+
 @app.post("/api/plannings", dependencies=[Depends(acces_bureau)])
 async def api_plannings(fichier: UploadFile = File(...), c=Depends(db)):
     """Dépôt d'un planning Excel : atelier ou pose de la serrurerie."""
-    contenu = await fichier.read()
+    contenu = await fichier.read(TAILLE_MAX + 1)
+    if len(contenu) > TAILLE_MAX:
+        raise HTTPException(413, f"Fichier de plus de {TAILLE_MAX // 1_000_000} Mo : ce n'est pas un planning")
     with tempfile.NamedTemporaryFile(suffix=".xlsx") as t:
         t.write(contenu)
         t.flush()
         try:
-            donnees = lecture.lire(t.name, interfast.entreprise())
+            # Hors de la boucle : un gros classeur ne gèle plus les tablettes.
+            donnees = await asyncio.to_thread(lecture.lire, t.name, interfast.entreprise())
         except lecture.FichierInattendu as e:
             raise HTTPException(422, str(e))
     res = base.importer(c, donnees)
@@ -276,16 +374,22 @@ def api_rhi_csv(semaine: str | None = None, c=Depends(db)):
     lundi = _lundi(semaine)
     sortie = io.StringIO()
     w = csv.writer(sortie, delimiter=";")
+
+    def cellule(x) -> str:
+        # Pas de formule Excel : un nom ou un libellé saisi sur la tablette
+        # (« =HYPERLINK(…) ») s'exécutait à l'ouverture du CSV au bureau.
+        x = str(x)
+        return "'" + x if x[:1] in ("=", "+", "-", "@", "\t", "\r") else x
     jours = [(lundi + dt.timedelta(days=i)).strftime("%a %d/%m") for i in range(7)]
     w.writerow(["Personne", "CH", "Chantier / motif", *jours, "Total", "Validé par"])
     for p in base.personnes(c):
         r = base.rhi(c, p["nom"], lundi, maintenant())
         v = r["validee"]
         for l in r["lignes"]:
-            w.writerow([p["nom"], l["ch"] or "", l["libelle"],
+            w.writerow([cellule(p["nom"]), l["ch"] or "", cellule(l["libelle"]),
                         *[str(x).replace(".", ",") for x in l["jours"]],
                         str(l["total"]).replace(".", ","),
-                        f"{v['par']} le {v['le'][:10]}" if v else ""])
+                        cellule(f"{v['par']} le {v['le'][:10]}") if v else ""])
     nom = f"RHI-{lundi.isoformat()}.csv"
     return PlainTextResponse("﻿" + sortie.getvalue(), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{nom}"'})
@@ -437,7 +541,7 @@ async def api_interfast_montants(c=Depends(db)):
 @app.get("/api/marche", dependencies=[Depends(acces_bureau)])
 def api_marche(jour: str | None = None, semaines: int = 4, c=Depends(db)):
     """La marche en avant : chaque pose des semaines à venir face à son amont."""
-    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    j = _jour(jour)
     return base.marche(c, j, max(1, min(semaines, 12)))
 
 
@@ -460,7 +564,7 @@ def api_marche_courrier(c=Depends(db)):
 @app.get("/api/marche.md", dependencies=[Depends(acces_bureau)])
 def api_marche_md(jour: str | None = None, c=Depends(db)):
     """La synthèse du lundi, en Markdown, à envoyer telle quelle."""
-    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    j = _jour(jour)
     texte = base.synthese_md(base.marche(c, j))
     return PlainTextResponse(texte, media_type="text/markdown; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="marche-en-avant-{j.isoformat()}.md"'})

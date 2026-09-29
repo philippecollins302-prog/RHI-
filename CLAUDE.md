@@ -125,12 +125,20 @@ Clever Cloud, organisation GROUP ALMA, FS Bucket monté sur `donnees/`,
 **une seule instance**, SQLite en journal **`delete`** (le WAL ne marche pas
 sur le bucket réseau). La branche `prod` déclenche le déploiement : on ne la
 pousse **que quand Philippe dit « pousse »**. Après chaque déploiement, lire
-`/api/sante` : un `git push` réussi ne prouve rien.
+`/api/sante` (publique : « prêt » ou non) puis `/api/sante/detail` (code
+bureau) : un `git push` réussi ne prouve rien. La mise en place tient en une
+commande, `sh outils/clever-installer.sh [vip|alfa]`, qui ne déploie pas.
 
 ## Accès
 `RHI_CODE_TERRAIN` (tablettes, téléphones) et `RHI_CODE_BUREAU` dans
-l'environnement. Absents = ouvert (poste de dev uniquement). Le code est
-demandé une fois par appareil et gardé.
+l'environnement. Le code est demandé une fois par appareil et gardé.
+**Les codes échouent fermés** (revue de sécurité du 29/09/2026) : tous deux
+absents = ouvert, mais sur un poste de dev seulement ; en production
+(`CC_APP_ID` ou `RHI_PRODUCTION`), un code manquant, deux codes identiques ou
+un code bureau de moins de 12 caractères ferment tout (503). Dix codes faux
+par minute et par adresse → 429. Un geste hors ligne rejoué dans une semaine
+validée → 409 (le geste en direct, lui, n'est jamais bloqué) ; un 503/429/401 le laisse dans la file de la tablette.
+`banc-securite.py` tient tout cela.
 
 ## Suite (voir docs/feuille-de-route.md)
 V2 menuiserie (Alfa) · lecture des CH depuis InterFast · envoi des heures

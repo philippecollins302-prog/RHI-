@@ -629,6 +629,13 @@ def demarrer(db, noms: list, quand: dt.datetime, ch=None, motif=None,
         raise ValueError("Un CH ou un motif")
     if motif and motif not in MOTIFS:
         motif = "AUTRE"
+    # Le geste en direct n'est jamais bloqué, même dans une semaine validée
+    # (banc-couts). Mais un geste REJOUÉ (hors ligne, arrivé en retard) ne
+    # rouvre pas une semaine que le bureau a déjà relue — revue de sécurité
+    # du 29/09/2026 : une tablette oubliée réécrivait un RHI signé.
+    if recu and (recu - quand).total_seconds() > DIFFERE_S:
+        for nom in noms:
+            _verifier_ouverte(db, nom, quand.date())
     arreter(db, noms, quand)
     ids = []
     with db:

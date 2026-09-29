@@ -80,8 +80,8 @@ with TestClient(appli.app) as c:
           "la base entière : bureau seulement")
 
 with TestClient(appli.app) as c:
-    s = c.get("/api/sante").json()
+    s = c.get("/api/sante/detail", headers={"X-RHI-Code": "bureau"}).json()
     verif(s["base"]["journal"] == "delete", "journal « delete » : le WAL ne marche pas sur le bucket réseau")
-    verif(s["base"]["inscriptible"] and s["codes_acces"], "état lisible après déploiement")
+    verif(s["base"]["inscriptible"] and s["codes_acces"] == "ok", "état lisible après déploiement")
 
 fin("banc-sauvegarde")

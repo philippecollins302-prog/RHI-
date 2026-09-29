@@ -224,7 +224,7 @@ verif(c.get("/api/personnes", headers={"X-RHI-Code": "bureau"}).status_code == 2
 verif(c.get("/api/sante").status_code == 200, "santé sans code")
 
 # ── InterFast : coupé, et il le dit ──
-verif(c.get("/api/sante").json()["interfast_ecriture"] is False, "écriture InterFast coupée")
+verif(c.get("/api/sante/detail", headers={"X-RHI-Code": "bureau"}).json()["interfast_ecriture"] is False, "écriture InterFast coupée")
 r = c.get("/api/interfast/outils", headers={"X-RHI-Code": "bureau"})
 verif(r.status_code == 503 and "INTERFAST_VIP" in r.json()["detail"], "sans clé : 503 qui nomme la clé")
 

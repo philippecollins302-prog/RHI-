@@ -165,7 +165,10 @@ async function vider() {
       try {
         await api(file[0].chemin, {method: 'POST', json: file[0].corps});
       } catch (e) {
-        if (!e.http) break;                    // pas de réseau : on réessaiera
+        // Pas de réseau, serveur qui redémarre (503 pendant un déploiement),
+        // frein des codes faux (429) ou code à ressaisir (401) : le geste
+        // reste dans la file. Seul un vrai refus (409, 422…) l'en retire.
+        if (!e.http || e.http === 401 || e.http === 429 || e.http >= 500) break;
         dire('Geste refusé par le serveur : ' + e.message);   // refusé : ne pas rejouer en boucle
       }
       file = enAttente().slice(1);

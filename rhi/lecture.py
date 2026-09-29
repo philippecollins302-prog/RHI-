@@ -14,6 +14,8 @@ lues : elles portent la BU et l'état d'appro, pas le pointage.
 import datetime as dt
 import re
 
+import zipfile
+
 import openpyxl
 
 from .textes import codes_ch, lignes, normaliser, semaines
@@ -58,11 +60,30 @@ class Grille:
         return r, r
 
 
+# Un planning pèse quelques centaines de Ko décompressé. Un .xlsx est un zip :
+# 20 Mo envoyés pouvaient se déplier en plusieurs Go et coucher le serveur.
+DEPLIE_MAX = 200_000_000
+CASES_FUSIONNEES_MAX = 200_000
+
+
 def ouvrir(chemin):
     try:
-        return openpyxl.load_workbook(chemin, data_only=True)
+        with zipfile.ZipFile(chemin) as z:
+            deplie = sum(i.file_size for i in z.infolist())
+    except (zipfile.BadZipFile, OSError) as e:
+        raise FichierInattendu(f"Fichier illisible par Excel : {e}") from e
+    if deplie > DEPLIE_MAX:
+        raise FichierInattendu("Fichier anormalement gros une fois ouvert : ce n'est pas un planning")
+    try:
+        classeur = openpyxl.load_workbook(chemin, data_only=True)
     except Exception as e:  # zip corrompu, .xls ancien, autre chose
         raise FichierInattendu(f"Fichier illisible par Excel : {e}") from e
+    for ws in classeur.worksheets:
+        fusion = sum((p.max_row - p.min_row + 1) * (p.max_col - p.min_col + 1)
+                     for p in ws.merged_cells.ranges)
+        if fusion > CASES_FUSIONNEES_MAX:
+            raise FichierInattendu(f"Onglet « {ws.title} » : fusions de cellules démesurées")
+    return classeur
 
 
 ENTREPRISES = {"VIP": "VIP Plus (serrurerie)", "ALFA": "Alfa (menuiserie)"}

@@ -9,8 +9,13 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 
 ## V1.1 — mise en service
 - Procédure écrite : `docs/deploiement.md` (application GROUP ALMA, FS
-  Bucket, variables, vérification par `/api/sante`). Reste les gestes dans la
-  console Clever Cloud, et le « pousse » de Philippe pour la branche `prod`.
+  Bucket, variables, vérification par `/api/sante`), et en une commande :
+  `sh outils/clever-installer.sh`. Reste une session `clever login`, les clés
+  dans la console, et le « pousse » de Philippe pour la branche `prod`.
+- ~~Revue de sécurité avant Internet~~ — faite le 29/09/2026 : codes qui
+  échouent fermés, frein aux codes faux, CSV sans formule, fichiers monstres
+  refusés, santé publique muette, semaine validée non rouverte par un geste
+  rejoué (`banc-securite`).
 - ~~Sauvegarde~~ — faite : une copie par jour gardée 30 jours, et le
   téléchargement de la base au bureau.
 - ~~Journal SQLite compatible avec le bucket réseau~~ — `delete`, pas `wal`.

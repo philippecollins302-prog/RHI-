@@ -16,6 +16,24 @@ sur son disque disparaît, **base comprise**. La base vit donc sur un
 - **Une seule instance.** Deux instances, ce sont deux processus qui
   écrivent dans la même base par le réseau.
 
+## 0. En une commande (étapes 1 à 3)
+
+Depuis un poste où `clever login` a été fait (ou avec `CLEVER_TOKEN` /
+`CLEVER_SECRET` dans l'environnement) :
+
+    sh outils/clever-installer.sh          # VIP Plus → application « rhi »
+    sh outils/clever-installer.sh alfa     # Alfa     → application « rhi-alfa »
+
+Il crée l'application dans GROUP ALMA, à Paris, une seule instance, le FS
+Bucket relié et monté sur `donnees/`, les variables de base, et tire deux
+codes d'accès au hasard — **affichés une seule fois : les noter**. Relançable
+sans dégâts : il ne recrée rien et ne remplace jamais des codes déjà posés.
+Il ne déploie pas (on attend « pousse ») et ne pose ni clé InterFast ni mot de
+passe SMTP : ceux-là passent par la console, jamais par une ligne de
+commande. Un banc (`banc-installer`) le joue contre un faux `clever`.
+
+Les étapes 1 à 3 ci-dessous décrivent les mêmes gestes à la main.
+
 ## 1. Créer l'application
 
 Console → organisation **GROUP ALMA** (pas l'espace personnel) → *Create* →
@@ -39,7 +57,7 @@ relié à l'application `rhi`. Noter son hôte
 | `CC_PYTHON_VERSION` | `3.12` |
 | `CC_FS_BUCKET` | `/donnees:bucket-…-fsbucket.services.clever-cloud.com` |
 | `RHI_CODE_TERRAIN` | le code des tablettes et téléphones (à choisir) |
-| `RHI_CODE_BUREAU` | le code du bureau (à choisir, différent) |
+| `RHI_CODE_BUREAU` | le code du bureau : différent, **12 caractères au moins** |
 | `RHI_COUT_HORAIRE` | le taux horaire moyen chargé, en €/h (en attendant les coûts par personne) |
 | `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
@@ -51,19 +69,36 @@ c'est là que le bucket est monté.
 ## 4. Déployer, puis vérifier — un `git push` ne prouve rien
 
 Le déploiement part à la poussée sur `prod` (règle du groupe : **on ne pousse
-`prod` que quand Philippe dit « pousse »**). Ensuite, ouvrir
-`https://<app>.cleverapps.io/api/sante` et lire :
+`prod` que quand Philippe dit « pousse »**). Ensuite, deux lectures.
+
+Publique — elle ne dit que « prêt » ou non, pour ne rien apprendre à un
+visiteur :
+
+    curl -s https://<app>.cleverapps.io/api/sante
+    {"ok": true, "heure": "…", "pret": true, "codes": "ok"}
+
+Le détail, avec le code bureau :
+
+    curl -s -H "X-RHI-Code: <code bureau>" https://<app>.cleverapps.io/api/sante/detail
 
 ```json
 "base": {"dans_donnees": true, "journal": "delete", "inscriptible": true},
 "cle_interfast": true,
-"codes_acces": true
+"codes_acces": "ok"
 ```
 
+- `pret: false` → lire le détail avant d'envoyer qui que ce soit.
 - `dans_donnees: false` → la base est sur le disque éphémère : **arrêter
   tout**, corriger le bucket, redéployer. Rien de saisi avant n'est gardé.
-- `codes_acces: false` → l'application est ouverte à tous : poser les deux
-  codes avant d'y envoyer qui que ce soit.
+- `codes: "à régler"` → l'application est **fermée** (503 « Accès fermé,
+  réglage incomplet : … ») : les codes échouent fermés. Il manque un code, les
+  deux sont identiques, ou le code bureau fait moins de 12 caractères. Le
+  message dit lequel.
+
+Dix codes faux en une minute depuis la même adresse bloquent cette adresse
+une minute (429) : une tablette qui insiste avec un vieux code, après un
+changement de code, s'arrête d'elle-même. Les refus sont dans
+`clever logs` (« code … refusé depuis … »).
 
 Puis `clever activity --app <id>` (le déploiement est-il OK ?) et
 `clever logs --app <id> --since 5m`.
@@ -93,7 +128,7 @@ Bucket**, et deux variables qui changent :
 | `INTERFAST_ALFA` | la clé InterFast d'Alfa (à la place de `INTERFAST_VIP`) |
 
 Codes d'accès propres à Alfa. Chaque instance refuse les plannings de
-l'autre, et `/api/sante` affiche `"entreprise"`.
+l'autre, et `/api/sante/detail` affiche `"entreprise"`.
 
 ## 7. Sauvegardes
 

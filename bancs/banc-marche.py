@@ -218,7 +218,7 @@ verif(r.status_code == 200 and r.json()["statut"] == "envoye", "le bouton du bur
 co = c.get("/api/marche/courrier").json()
 verif(co["a"] == ["alexis@exemple.fr", "philippe@exemple.fr"] and co["smtp"] is False and co["dernier"]["statut"] == "envoye",
       f"le bureau voit à qui et le dernier envoi : {co}")
-verif(c.get("/api/sante").json()["courrier"] == {"smtp": False, "destinataires": 2}, "la santé dit si le courrier est réglé")
+verif(c.get("/api/sante/detail").json()["courrier"] == {"smtp": False, "destinataires": 2}, "la santé dit si le courrier est réglé")
 courrier.transport = courrier._smtp
 verif(courrier.envoyer("x", "y", "z.md", b"") == "simule", "SMTP non réglé : simulé, jamais posté")
 os.environ.pop("RHI_MARCHE_A")

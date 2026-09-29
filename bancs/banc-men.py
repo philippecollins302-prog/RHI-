@@ -54,7 +54,7 @@ r = c.post("/api/plannings", files={"fichier": ("p.xlsx", (tmp / "pose-men.xlsx"
 verif(r.status_code == 200 and r.json()["personnes"] == 2, f"import pose menuiserie : {r.text}")
 r = c.post("/api/plannings", files={"fichier": ("s.xlsx", (tmp / "ate-ser.xlsx").read_bytes())})
 verif(r.status_code == 422 and "VIP Plus" in r.json()["detail"], "le planning de VIP refusé sur l'instance Alfa")
-s = c.get("/api/sante").json()
+s = c.get("/api/sante/detail").json()
 verif(s["entreprise"] == "ALFA" and s["cle_interfast"] is False,
       "la clé de VIP ne sert pas à Alfa : INTERFAST_ALFA attendue")
 r = c.post("/api/interfast/chantiers")
