@@ -4,6 +4,8 @@ import datetime as dt
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -25,8 +27,13 @@ appli.app.state.chemin_base = tmp / "rhi.db"
 with TestClient(appli.app) as c:   # le « with » lance le veilleur, comme en production
     c.post("/api/demarrer", json={"personnes": ["PAUL"], "ch": "CH00901"})
     dossier = tmp / "sauvegardes"
-    verif((dossier / "rhi-2026-09-29.db").exists() or appli.sauvegarde_du_jour() is None,
-          "sauvegarde du jour faite au démarrage")
+    # Le veilleur tourne dans son fil : on lui laisse jusqu'à 5 s, sans
+    # jamais faire la sauvegarde à sa place (le contrôle ne prouverait rien).
+    for _ in range(50):
+        if (dossier / "rhi-2026-09-29.db").exists():
+            break
+        time.sleep(0.1)
+    verif((dossier / "rhi-2026-09-29.db").exists(), "sauvegarde du jour faite au démarrage, par le veilleur")
     verif(appli.sauvegarde_du_jour() is None, "une seule par jour")
 
     r = c.get("/api/sauvegarde")
@@ -37,6 +44,25 @@ with TestClient(appli.app) as c:   # le « with » lance le veilleur, comme en p
     verif(t.execute("SELECT personne, ch FROM pointages").fetchall() == [("PAUL", "CH00901")],
           "la copie téléchargée se rouvre et contient le pointage")
     t.close()
+
+# Deux sauvegardes au même instant : une seule copie, aucune erreur.
+db = base.connexion(tmp / "rhi.db")
+rendus, erreurs = [], []
+
+
+def sauver():
+    try:
+        rendus.append(base.sauvegarder(base.connexion(tmp / "rhi.db"), tmp / "course", dt.date(2026, 9, 30)))
+    except Exception as e:  # noqa: BLE001
+        erreurs.append(e)
+
+
+fils = [threading.Thread(target=sauver) for _ in range(4)]
+for f in fils:
+    f.start()
+for f in fils:
+    f.join()
+verif(not erreurs and sum(1 for x in rendus if x) == 1, f"une seule copie, les autres attendent : {rendus} {erreurs}")
 
 # 35 jours plus tard : on garde 30 jours.
 db = base.connexion(tmp / "rhi.db")

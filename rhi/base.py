@@ -13,6 +13,7 @@ import datetime as dt
 import re
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1383,7 +1384,19 @@ def refs_semaine(db, personne: str, lundi: dt.date) -> list:
 GARDER_JOURS = 30
 
 
+_VERROU_SAUVEGARDE = threading.Lock()
+
+
 def sauvegarder(db, dossier: Path, jour: dt.date) -> Path | None:
+    """Une à la fois : le veilleur la lance dans un fil au démarrage, et un
+    second appel au même instant écrivait le même fichier provisoire que le
+    premier (vu le 29/09/2026 : banc-sauvegarde rouge une fois sur
+    plusieurs). Le second attend, puis trouve la copie faite."""
+    with _VERROU_SAUVEGARDE:
+        return _sauvegarder(db, dossier, jour)
+
+
+def _sauvegarder(db, dossier: Path, jour: dt.date) -> Path | None:
     """Une copie cohérente de la base par jour, gardée 30 jours.
 
     L'API de sauvegarde de SQLite copie une base en cours d'écriture sans la
