@@ -16,6 +16,27 @@ sur son disque disparaît, **base comprise**. La base vit donc sur un
 - **Une seule instance.** Deux instances, ce sont deux processus qui
   écrivent dans la même base par le réseau.
 
+## L'application VIP Plus existe (29/09/2026)
+
+| | |
+|---|---|
+| Application | `app_a5509cc0-71a5-49d4-b201-ca1941713f22` |
+| Organisation | GROUP ALMA (`orga_b3f4776d-f719-4c57-afbb-628b175dff3a`) |
+| Adresse par défaut | `https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io` |
+
+Créée depuis la console, sans lien GitHub : rien ne se déploie tout seul. Le
+29/09 au soir, l'adresse répondait 503 — normal, aucun code n'y était encore
+poussé. Pour y relier un poste (et que `outils/clever-installer.sh` la
+reconnaisse au lieu d'en créer une autre) :
+
+    clever link app_a5509cc0-71a5-49d4-b201-ca1941713f22 --alias rhi
+
+Déployer — **seulement quand Philippe dit « pousse »** :
+
+    clever deploy --alias rhi
+    clever activity --alias rhi        # OK ou FAIL : un push ne prouve rien
+    curl -s https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io/api/sante
+
 ## 0. En une commande (étapes 1 à 3)
 
 Depuis un poste où `clever login` a été fait (ou avec `CLEVER_TOKEN` /

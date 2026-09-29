@@ -126,7 +126,10 @@ Clever Cloud, organisation GROUP ALMA, FS Bucket monté sur `donnees/`,
 sur le bucket réseau). La branche `prod` déclenche le déploiement : on ne la
 pousse **que quand Philippe dit « pousse »**. Après chaque déploiement, lire
 `/api/sante` (publique : « prêt » ou non) puis `/api/sante/detail` (code
-bureau) : un `git push` réussi ne prouve rien. La mise en place tient en une
+bureau) : un `git push` réussi ne prouve rien. Application VIP Plus :
+`app_a5509cc0-71a5-49d4-b201-ca1941713f22` (GROUP ALMA), adresse
+`https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io` — lire le
+site, jamais la branche. La mise en place tient en une
 commande, `sh outils/clever-installer.sh [vip|alfa]`, qui ne déploie pas.
 
 ## Accès
