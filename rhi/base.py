@@ -729,6 +729,62 @@ def affaires_pointees(db, a: dt.datetime) -> list:
     return sorted(sortie, key=lambda x: -(x["consomme_pct"] or 0) if x["heures_prevues"] else -x["heures_reelles"])
 
 
+# ═══════════════════════ VERS INTERFAST (à blanc) ═══════════════════════
+
+def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
+    """Ce que le chemin A de docs/interfast.md enverrait pour une semaine :
+    une intervention par personne, par CH et par jour, durée réelle,
+    SEULEMENT pour les RHI validés. Rien n'est écrit : on montre, pour que
+    le jour du branchement personne ne découvre ce qui part.
+
+    Une ligne est « bloquée » si InterFast ne pourrait pas la recevoir :
+    personne sans compte InterFast, CH inconnu d'InterFast, chantier sans
+    client (planifier_intervention exige un client)."""
+    fin = lundi + dt.timedelta(days=7)
+    valides = {r["personne"]: dict(r) for r in db.execute(
+        "SELECT * FROM validations WHERE lundi=?", (lundi.isoformat(),))}
+    gens = {r["nom"]: dict(r) for r in db.execute("SELECT * FROM personnes")}
+    affaires = {r["ch"]: dict(r) for r in db.execute("SELECT * FROM affaires")}
+    lignes = {}
+    for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND ch IS NOT NULL
+                           AND fin IS NOT NULL AND debut >= ? AND debut < ? ORDER BY debut""",
+                        (lundi.isoformat(), fin.isoformat())):
+        p = dict(r)
+        if p["personne"] not in valides:
+            continue
+        cle = (p["personne"], p["ch"], p["debut"][:10])
+        l = lignes.setdefault(cle, {"personne": p["personne"], "ch": p["ch"], "jour": p["debut"][:10],
+                                    "heure": p["debut"][11:16], "heures": 0.0, "libelles": [],
+                                    "deja_envoye": False})
+        l["heures"] += _heures(p, a)
+        if p["libelle"] and p["libelle"] not in l["libelles"]:
+            l["libelles"].append(p["libelle"])
+        l["deja_envoye"] = l["deja_envoye"] or bool(p["interfast"])
+    sortie = []
+    for l in lignes.values():
+        g, aff = gens.get(l["personne"], {}), affaires.get(l["ch"], {})
+        blocages = []
+        if not g.get("interfast_user_id"):
+            blocages.append("personne sans compte InterFast")
+        if not aff.get("interfast_id"):
+            blocages.append("CH inconnu d'InterFast")
+        elif not aff.get("client"):
+            blocages.append("chantier sans client")
+        sortie.append({
+            **l, "heures": round(l["heures"], 2),
+            "technicien": g.get("nom_complet") or l["personne"],
+            "client": aff.get("client", ""), "chantier": aff.get("titre") or aff.get("chantier", ""),
+            "description": f"RHI · {l['ch']} · " + (" / ".join(l["libelles"]) or "pointage"),
+            "etat": "déjà envoyé" if l["deja_envoye"] else ("bloqué" if blocages else "prêt"),
+            "blocages": blocages})
+    sortie.sort(key=lambda x: (x["jour"], x["personne"], x["ch"]))
+    return {"lundi": lundi.isoformat(), "lignes": sortie,
+            "personnes_validees": sorted(valides),
+            "prets": sum(1 for x in sortie if x["etat"] == "prêt"),
+            "bloques": sum(1 for x in sortie if x["etat"] == "bloqué"),
+            "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prêt"), 2)}
+
+
 # ═══════════════════════ SAUVEGARDE ═══════════════════════
 
 GARDER_JOURS = 30

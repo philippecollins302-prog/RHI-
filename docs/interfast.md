@@ -80,6 +80,14 @@ validation du RHI par le bureau : une écriture par personne, par CH et par
 jour, avec la référence gardée dans `pointages.interfast` pour ne jamais
 envoyer deux fois.
 
+**L'aperçu est en place** (bureau → *Vers InterFast*) : pour chaque semaine
+validée, la liste exacte des interventions que le chemin A créerait — une par
+personne, par CH et par jour, à l'heure du premier pointage, durée réelle,
+technicien et client InterFast — avec ce qui bloquerait (personne sans
+compte, CH inconnu d'InterFast, chantier sans client). Rien n'est écrit.
+Brancher A, ce sera appeler `planifier_intervention` puis `confirmer_action`
+pour chaque ligne « prête » et garder la référence dans `pointages.interfast`.
+
 Question à poser au support InterFast : *« Existe-t-il un moyen, par l'API ou
 le MCP, d'enregistrer du temps passé (timesheet) sur un chantier ou une
 intervention ? »*

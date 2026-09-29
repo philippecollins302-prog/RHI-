@@ -48,7 +48,7 @@ async function afficher() {
   try {
     await ({rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
             direct: ongletDirect, plannings: ongletPlannings,
-            personnes: ongletPersonnes}[vue.onglet] || ongletRhi)();
+            personnes: ongletPersonnes, envois: ongletEnvois}[vue.onglet] || ongletRhi)();
   } catch (e) {
     $('#vue').innerHTML = `<div class="rien">Erreur : ${esc(e.message)}</div>`;
   }
@@ -309,6 +309,31 @@ async function ongletPersonnes() {
       setTimeout(afficher, 4000);
     } catch (e) { r0.innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(e.message)}`; }
   };
+}
+
+// ── Vers InterFast : ce qui partirait, à blanc ──
+async function ongletEnvois() {
+  const d = await api('/api/interfast/envois?semaine=' + vue.semaine);
+  const cl = {'prêt': 'p-vert', 'bloqué': 'p-rouge', 'déjà envoyé': 'p-ambre'};
+  $('#vue').innerHTML = choixSemaine() + `
+    <div class="carte">
+      <p><strong>Rien n'est envoyé.</strong> ${d.ecriture ? '' : 'L\'écriture vers InterFast est coupée.'}
+        Voici ce qui partirait pour cette semaine si le chemin « une intervention par personne, par CH et
+        par jour » était branché (docs/interfast.md) — seulement pour les RHI <em>validés</em>.</p>
+      <p><span class="pastille p-vert">${esc(d.prets)} prêtes · ${heures(d.heures_pretes) || '0h'}</span>
+        <span class="pastille p-rouge">${esc(d.bloques)} bloquées</span>
+        <span class="doux">RHI validés : ${esc(d.personnes_validees.join(', ') || 'aucun')}</span></p>
+    </div>` + (d.lignes.length ? `<div class="defile"><table>
+      <tr><th>Jour</th><th>Technicien</th><th>CH</th><th>Client · chantier</th><th>Début</th><th class="n">Durée</th><th>État</th></tr>
+      ${d.lignes.map((l) => `<tr>
+        <td>${esc(l.jour.slice(8, 10))}/${esc(l.jour.slice(5, 7))}</td><td>${esc(l.technicien)}</td>
+        <td class="ch">${esc(l.ch)}</td><td>${esc(l.client)}<br><span class="doux">${esc(l.chantier)}</span></td>
+        <td>${esc(l.heure)}</td><td class="n">${heures(l.heures)}</td>
+        <td><span class="pastille ${esc(cl[l.etat] || '')}">${esc(l.etat)}</span>
+          ${l.blocages.length ? '<br><span class="doux">' + esc(l.blocages.join(' · ')) + '</span>' : ''}</td>
+      </tr>`).join('')}
+    </table></div>` : '<div class="rien">Aucun RHI validé cette semaine : rien ne partirait.</div>');
+  brancherSemaine();
 }
 
 afficher();

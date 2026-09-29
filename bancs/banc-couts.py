@@ -165,4 +165,26 @@ c.delete("/api/validations?personne=PAUL&semaine=2026-09-28")
 verif(c.patch(f"/api/pointages/{pid}", json={"fin": "2026-09-28T12:00"}).status_code == 200,
       "dévalidée : corrigeable de nouveau")
 
+# ── Vers InterFast, à blanc ──
+c.post("/api/validations", json={"personne": "PAUL", "semaine": "2026-09-28", "qui": "Alexis"})
+e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
+verif(e["ecriture"] is False and e["personnes_validees"] == ["PAUL"], "à blanc, validés seulement")
+verif({x["personne"] for x in e["lignes"]} == {"PAUL"}, "Jean n'est pas validé : rien pour lui")
+l28 = [x for x in e["lignes"] if x["jour"] == "2026-09-28"]
+verif(len(l28) == 1 and l28[0]["ch"] == "CH00901" and l28[0]["heure"] == "07:00",
+      f"une ligne par personne, CH et jour, à l'heure du premier pointage : {l28}")
+verif(l28[0]["etat"] == "bloqué" and "CH inconnu d'InterFast" in l28[0]["blocages"],
+      "CH jamais relu dans InterFast : bloqué, et on dit pourquoi")
+verif(all("RHI · CH" in x["description"] for x in e["lignes"]), "description reconnaissable dans InterFast")
+# Jean est relié à InterFast ; CH00901 y devient connu, avec son client : prêt.
+base.importer_chantiers(base.connexion(appli.app.state.chemin_base),
+                        [{"id": 777, "ch": "CH00901", "titre": "Résidence des Pins", "client": "BAILLEUR SUD",
+                          "statut": "En cours"}])
+c.post("/api/validations", json={"personne": "JEAN", "semaine": "2026-09-28", "qui": "Alexis"})
+e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
+jean = [x for x in e["lignes"] if x["personne"] == "JEAN" and x["jour"] == "2026-09-28"][0]
+verif(jean["etat"] == "prêt" and jean["technicien"] == "Jean Durand" and jean["client"] == "BAILLEUR SUD"
+      and jean["heures"] == 4.0, f"prêt, avec tout ce qu'InterFast demande : {jean}")
+verif(e["heures_pretes"] >= 4.0 and e["prets"] >= 1, "le total prêt est compté")
+
 fin("banc-couts")
