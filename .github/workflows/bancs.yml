@@ -1,0 +1,18 @@
+# Les bancs sur chaque poussée : le filet ne dépend pas de la machine.
+name: bancs
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tous-les-bancs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: PY=python sh bancs/tous.sh
