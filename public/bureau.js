@@ -340,7 +340,7 @@ async function ongletEnvois() {
 async function ongletMarche() {
   const d = await api('/api/marche');
   const cl = {rouge: 'p-rouge', orange: 'p-ambre', gris: '', vert: 'p-vert'};
-  const titre = {rouge: 'Risques prioritaires', orange: 'À surveiller', gris: 'Données à nettoyer', vert: 'Cohérent'};
+  const titre = {rouge: 'Risques prioritaires', orange: 'À surveiller', gris: 'À confirmer ou nettoyer', vert: 'Cohérent'};
   const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const blocs = ['rouge', 'orange', 'gris', 'vert'].map((n) => {
     const ls = d.lignes.filter((l) => l.niveau === n);
@@ -360,7 +360,18 @@ async function ongletMarche() {
         Une fabrication n'est comptée <strong>faite</strong> que si elle est datée d'avant aujourd'hui.</p>
       <p>${d.bet_charge ? `BET chargé, planifié jusqu'au ${esc(date(d.bet_a_jour_au || d.jour))}.`
         : '<span class="pastille p-ambre">BET non chargé : déposer le planning BET (onglet Plannings) pour les alertes « études ».</span>'}</p>
+      <p><a class="btn" href="/api/marche.md" id="synthese">⬇ La synthèse en Markdown (à envoyer)</a></p>
     </div>` + (blocs || '<div class="rien">Aucune pose dans les 4 semaines : déposer le planning de pose.</div>');
+  $('#synthese').onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const texte = await api('/api/marche.md');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([texte], {type: 'text/markdown'}));
+      a.download = 'marche-en-avant-' + d.jour + '.md';
+      a.click();
+    } catch (err) { dire(err.message); }
+  };
 }
 
 afficher();

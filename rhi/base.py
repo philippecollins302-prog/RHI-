@@ -532,7 +532,7 @@ def ecran(db, jour: dt.date) -> dict:
                 e["personnes"].append(r["personne"])
         pose.append({"jour": j.isoformat(), "equipes": list(equipes.values())})
     traitement = [dict(r) for r in db.execute(
-        """SELECT t.ch, t.debut, t.fin, t.libelle, COALESCE(a.chantier,'') AS chantier FROM traitements t
+        """SELECT DISTINCT t.ch, t.debut, t.fin, t.libelle, COALESCE(a.chantier,'') AS chantier FROM traitements t
            LEFT JOIN affaires a ON a.ch = t.ch
            WHERE t.fin >= ? AND t.debut <= ? ORDER BY t.debut""",
         (lundi.isoformat(), (lundi + dt.timedelta(days=6)).isoformat()))]
@@ -930,7 +930,12 @@ def analyser_ch(db, ch: str, pose: dt.date, jour: dt.date, libelle: str = "") ->
                                    + (f" — {e['commentaire']}" if e["commentaire"] else "")))
     # Le traitement de surface, entre la fab et la pose (affaire entière : le
     # planning TRAITEMENT ne nomme pas la pièce).
-    for r in db.execute("SELECT * FROM traitements WHERE ch=? AND fin >= ? ORDER BY fin", (ch, jour.isoformat())):
+    # Seul un envoi DÉJÀ PARTI le jour de la pose est un risque : un envoi qui
+    # part le jour même ou après concerne les pièces suivantes (Rapoport, envoi
+    # du 12 au 19/10 pour une pose le 09/10). Le même envoi écrit dans deux
+    # cases ne compte qu'une fois.
+    for r in db.execute("""SELECT DISTINCT debut, fin FROM traitements WHERE ch=? AND debut < ? AND fin >= ?
+                           ORDER BY fin""", (ch, pose.isoformat(), pose.isoformat())):
         fin_t = dt.date.fromisoformat(r["fin"])
         if fin_t >= pose:
             # Orange, jamais rouge : le planning TRAITEMENT nomme le chantier,
@@ -1015,6 +1020,47 @@ def marche(db, jour: dt.date, semaines: int = 4, enregistrer: bool = True) -> di
             "compte": {n: sum(1 for l in lignes if l["niveau"] == n) for n in NIVEAUX},
             "bet_charge": db.execute("SELECT COUNT(*) FROM etudes_bet").fetchone()[0] > 0,
             "bet_a_jour_au": bet_a_jour}
+
+
+def synthese_md(m: dict) -> str:
+    """La marche en avant en Markdown, dans la forme des synthèses d'Alexis
+    (« Risques prioritaires / À surveiller / Cohérent / BET ») : le « point
+    MD » qu'il demandait à son agent pour l'envoyer."""
+    def jj(iso):
+        return f"{iso[8:10]}/{iso[5:7]}"
+    titres = {"rouge": "Risques prioritaires", "orange": "À surveiller",
+              "gris": "À confirmer ou nettoyer", "vert": "Cohérent, rien à signaler"}
+    out = [f"# Marche en avant — semaine du {jj(m['jour'])}",
+           "",
+           f"Poses du {jj(m['jour'])} au {jj(m['jusqu_au'])}, face au plan de charge, au planning FAB, "
+           "au planning TRAITEMENT et au BET. Une fabrication n'est comptée faite que si elle est datée "
+           "d'avant le jour de l'analyse.",
+           "",
+           "**Bilan** : " + " · ".join(f"{m['compte'][n]} {titres[n].split(',')[0].lower()}"
+                                        for n in ("rouge", "orange", "gris", "vert")),
+           ""]
+    for n in ("rouge", "orange", "gris"):
+        lignes = [l for l in m["lignes"] if l["niveau"] == n]
+        if not lignes:
+            continue
+        out += [f"## {titres[n]}", ""]
+        for l in lignes:
+            out.append(f"- **{l['libelle']}** ({l['ch'] or 'sans CH'}) — pose le {jj(l['pose'])} "
+                       f"(J{'+' if l['dans_j'] >= 0 else ''}{l['dans_j']}), {', '.join(l['personnes'])}")
+            for c in l["constats"]:
+                if c["niveau"] == "vert":
+                    continue
+                suite = f" *({c['consecutifs']}ᵉ analyse d'affilée)*" if c.get("consecutifs", 0) > 1 else ""
+                out.append(f"  - {c['texte']}{suite}")
+        out.append("")
+    verts = [l for l in m["lignes"] if l["niveau"] == "vert"]
+    if verts:
+        out += [f"## {titres['vert']}", "",
+                ", ".join(f"{l['libelle']} ({jj(l['pose'])})" for l in verts), ""]
+    out += ["## BET", "",
+            (f"Chargé, planifié jusqu'au {jj(m['bet_a_jour_au'])}." if m["bet_charge"] and m["bet_a_jour_au"]
+             else "Non chargé : pas d'alerte « études » possible cette semaine."), ""]
+    return "\n".join(out)
 
 
 # ═══════════════════════ VERS INTERFAST (à blanc) ═══════════════════════

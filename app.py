@@ -400,6 +400,15 @@ def api_marche(jour: str | None = None, semaines: int = 4, c=Depends(db)):
     return base.marche(c, j, max(1, min(semaines, 12)))
 
 
+@app.get("/api/marche.md", dependencies=[Depends(acces_bureau)])
+def api_marche_md(jour: str | None = None, c=Depends(db)):
+    """La synthèse du lundi, en Markdown, à envoyer telle quelle."""
+    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    texte = base.synthese_md(base.marche(c, j))
+    return PlainTextResponse(texte, media_type="text/markdown; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="marche-en-avant-{j.isoformat()}.md"'})
+
+
 @app.get("/api/interfast/envois", dependencies=[Depends(acces_bureau)])
 def api_envois(semaine: str | None = None, c=Depends(db)):
     """À blanc : ce qui partirait vers InterFast pour une semaine validée."""

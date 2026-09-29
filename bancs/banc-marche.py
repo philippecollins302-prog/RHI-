@@ -74,6 +74,9 @@ for i, j in enumerate(jours):
 tr.cell(3, col[D(2026, 9, 29)], "FAIT AVANT - CH00901/DEVIS1234")            # jusqu'au 02/10, pose le 01/10
 tr.merge_cells(start_row=3, start_column=col[D(2026, 9, 29)], end_row=3, end_column=col[D(2026, 10, 2)])
 tr.cell(4, col[D(2026, 9, 21)], "STOCK - CHCH00907/DEVIS")                   # fini avant la pose : rien à dire
+tr.cell(5, col[D(2026, 9, 29)], "FAIT AVANT - CH00901/DEVIS1234")            # la même, écrite deux fois
+tr.merge_cells(start_row=5, start_column=col[D(2026, 9, 29)], end_row=5, end_column=col[D(2026, 10, 2)])
+tr.cell(6, col[D(2026, 10, 7)], "FAB FUTURE - CH00902/DEVIS")                # part après la pose du 05/10 : autre pièce
 wb.save(tmp / "ate.xlsx")
 
 # ── Pose : septembre et octobre ──
@@ -131,6 +134,8 @@ def textes(nom):
 verif(niveau("FAIT AVANT") == "orange" and "traitement de surface" in textes("FAIT AVANT") and "02/10" in textes("FAIT AVANT"),
       f"fab le 15/09, mais en traitement jusqu'au 02/10 pour une pose le 01/10 — {textes('FAIT AVANT')}")
 verif("traitement" not in textes("STOCK"), "un traitement fini avant la pose ne dit rien (et « CHCH00907 » se lit)")
+verif(textes("FAIT AVANT").count("traitement de surface") == 1, "le même envoi écrit deux fois : un seul constat")
+verif("traitement" not in textes("FAB FUTURE"), "un envoi qui part après la pose concerne une autre pièce : silence")
 e = c.get("/api/ecran?jour=2026-09-28").json()
 verif([t["ch"] for t in e["traitement"]] == ["CH00901"], f"l'écran montre les envois de la semaine : {e['traitement']}")
 verif(niveau("FAB FUTURE") == "rouge" and "06/10" in textes("FAB FUTURE"),
@@ -172,5 +177,17 @@ m2 = c.get("/api/marche?jour=2026-09-30").json()
 bloque = [l for l in m2["lignes"] if l["libelle"].startswith("BLOQUE")][0]
 verif(bloque["constats"][0]["consecutifs"] == 2, f"deuxième constat identique d'affilée : {bloque['constats'][0]}")
 verif(m2["bet_charge"] and m2["bet_a_jour_au"] == "2026-10-13", "le BET chargé, et jusqu'où il va")
+
+# ── La synthèse en Markdown ──
+md = c.get("/api/marche.md?jour=2026-09-30")
+verif(md.status_code == 200 and "attachment" in md.headers["content-disposition"], "téléchargeable")
+t = md.text
+verif(t.startswith("# Marche en avant — semaine du 30/09"), "titre daté")
+verif("## Risques prioritaires" in t and "## À surveiller" in t and "## BET" in t,
+      "les rubriques des synthèses d'Alexis")
+verif(t.index("## Risques prioritaires") < t.index("## À surveiller") < t.index("## À confirmer ou nettoyer"),
+      "dans l'ordre de gravité")
+verif("FAB FUTURE" in t and "2ᵉ analyse d'affilée" in t, "les constats et leur répétition")
+verif("planifié jusqu'au 13/10" in t, "l'état du BET")
 
 fin("banc-marche")
