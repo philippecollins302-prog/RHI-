@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from rhi import base, interfast, lecture
+from rhi import base, courrier, interfast, lecture
 
 PUBLIC = Path(__file__).parent / "public"
 
@@ -37,13 +37,49 @@ def sauvegarde_du_jour():
         c.close()
 
 
+FINIS = ("envoye", "simule", "sans destinataire")
+
+
+def marche_du_lundi(c, a: dt.datetime, force: bool = False):
+    """La synthèse de la marche en avant, envoyée le lundi à partir de 7 h.
+
+    Une fois par lundi : ce qui est parti, ou ce qui ne pouvait pas partir
+    (SMTP non réglé, aucun destinataire), est noté et ne se retente pas.
+    Seule une erreur se retente à l'heure suivante. `force` : le bouton du
+    bureau, n'importe quel jour."""
+    if not force and (a.weekday() != 0 or a.hour < 7):
+        return None
+    jour = a.date()
+    deja = c.execute("SELECT statut FROM courriers WHERE jour=? AND quoi='marche'",
+                     (jour.isoformat(),)).fetchone()
+    if deja and deja[0] in FINIS and not force:
+        return None
+    texte = base.synthese_md(base.marche(c, jour))
+    statut = courrier.envoyer(f"Marche en avant — {jour.strftime('%d/%m/%Y')}", texte,
+                              f"marche-en-avant-{jour.isoformat()}.md", texte.encode("utf-8"))
+    with c:
+        c.execute("""INSERT INTO courriers VALUES (?, 'marche', ?, ?)
+                     ON CONFLICT(jour, quoi) DO UPDATE SET statut=excluded.statut, le=excluded.le""",
+                  (jour.isoformat(), statut, a.isoformat(timespec="seconds")))
+    return statut
+
+
+def lundi_matin():
+    c = base.connexion(getattr(app.state, "chemin_base", None))
+    try:
+        return marche_du_lundi(c, maintenant())
+    finally:
+        c.close()
+
+
 async def veilleur():
-    """Toutes les heures : la sauvegarde du jour, si elle n'est pas faite."""
+    """Toutes les heures : la sauvegarde du jour, et le lundi la marche en avant."""
     while True:
-        try:
-            await asyncio.to_thread(sauvegarde_du_jour)
-        except Exception as e:  # une sauvegarde ratée ne doit pas tuer l'appli
-            print("sauvegarde ratée :", e)
+        for tache in (sauvegarde_du_jour, lundi_matin):
+            try:
+                await asyncio.to_thread(tache)
+            except Exception as e:  # une tâche ratée ne doit pas tuer l'appli
+                print(tache.__name__, "ratée :", e)
         await asyncio.sleep(3600)
 
 
@@ -152,7 +188,9 @@ def sante(c=Depends(db)):
                      "journal": c.execute("PRAGMA journal_mode").fetchone()[0],
                      "inscriptible": os.access(chemin.parent, os.W_OK)},
             "cle_interfast": bool(interfast.cle()),
-            "codes_acces": bool(os.getenv("RHI_CODE_TERRAIN")) and bool(os.getenv("RHI_CODE_BUREAU"))}
+            "codes_acces": bool(os.getenv("RHI_CODE_TERRAIN")) and bool(os.getenv("RHI_CODE_BUREAU")),
+            "courrier": {"smtp": bool(courrier.reglage()["host"] and courrier.reglage()["user"]),
+                         "destinataires": len(courrier.destinataires())}}
 
 
 @app.get("/api/personnes", dependencies=[Depends(acces_terrain)])
@@ -401,6 +439,22 @@ def api_marche(jour: str | None = None, semaines: int = 4, c=Depends(db)):
     """La marche en avant : chaque pose des semaines à venir face à son amont."""
     j = dt.date.fromisoformat(jour) if jour else maintenant().date()
     return base.marche(c, j, max(1, min(semaines, 12)))
+
+
+@app.post("/api/marche/envoyer", dependencies=[Depends(acces_bureau)])
+def api_marche_envoyer(c=Depends(db)):
+    """Envoie la synthèse du jour tout de suite (le bouton du bureau)."""
+    statut = marche_du_lundi(c, maintenant(), force=True)
+    if statut.startswith("erreur"):
+        raise HTTPException(502, statut)
+    return {"statut": statut, "a": courrier.destinataires()}
+
+
+@app.get("/api/marche/courrier", dependencies=[Depends(acces_bureau)])
+def api_marche_courrier(c=Depends(db)):
+    dernier = c.execute("SELECT * FROM courriers WHERE quoi='marche' ORDER BY jour DESC LIMIT 1").fetchone()
+    return {"a": courrier.destinataires(), "smtp": bool(courrier.reglage()["host"] and courrier.reglage()["user"]),
+            "dernier": dict(dernier) if dernier else None}
 
 
 @app.get("/api/marche.md", dependencies=[Depends(acces_bureau)])

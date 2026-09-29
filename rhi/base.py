@@ -131,6 +131,13 @@ CREATE TABLE IF NOT EXISTS cases_interfast (
   num INTEGER,                     -- id interne InterFast (1819630), trouvé à la relecture
   PRIMARY KEY (ch, jour)
 );
+CREATE TABLE IF NOT EXISTS courriers (
+  jour TEXT NOT NULL,
+  quoi TEXT NOT NULL,              -- 'marche'
+  statut TEXT NOT NULL,            -- envoye | simule | sans destinataire | erreur: …
+  le TEXT NOT NULL,
+  PRIMARY KEY (jour, quoi)
+);
 CREATE TABLE IF NOT EXISTS heures_interfast (
   ref TEXT NOT NULL,               -- la case (IN00123)
   user_id INTEGER NOT NULL,

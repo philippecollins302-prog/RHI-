@@ -46,6 +46,8 @@ planning ATE et le planning POSE SER. La tablette est sur
 | `RHI_CODE_TERRAIN` | code des tablettes et téléphones |
 | `RHI_CODE_BUREAU` | code du bureau (voit tout) |
 | `RHI_COUT_HORAIRE` | taux horaire moyen (€/h) quand une personne n'a pas le sien |
+| `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
 | `INTERFAST_VIP` / `INTERFAST_ALFA` | clé InterFast de l'entreprise de l'instance — jamais dans le dépôt |
 
 ## Bancs

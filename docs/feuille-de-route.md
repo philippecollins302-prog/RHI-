@@ -47,4 +47,6 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 - ~~Analyse de la marche en avant BET → fab → pose~~ — faite (bureau →
   *Marche en avant*), en code et avec bancs : une date de fabrication future
   n'est jamais « réalisée », et le traitement de surface est dans la chaîne.
-  Reste : l'envoi automatique du lundi 7 h (mail).
+  ~~L'envoi automatique du lundi 7 h~~ — fait : SMTP d'Ali Baba,
+  destinataires dans `RHI_MARCHE_A`. Reste à régler ces variables sur
+  Clever Cloud.

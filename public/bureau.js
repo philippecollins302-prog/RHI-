@@ -471,7 +471,7 @@ async function ongletEnvois() {
 
 // ── Marche en avant : chaque pose à venir face à ses études et sa fab ──
 async function ongletMarche() {
-  const d = await api('/api/marche');
+  const [d, co] = await Promise.all([api('/api/marche'), api('/api/marche/courrier')]);
   const cl = {rouge: 'p-rouge', orange: 'p-ambre', gris: '', vert: 'p-vert'};
   const titre = {rouge: 'Risques prioritaires', orange: 'À surveiller', gris: 'À confirmer ou nettoyer', vert: 'Cohérent'};
   const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
@@ -494,7 +494,15 @@ async function ongletMarche() {
       <p>${d.bet_charge ? `BET chargé, planifié jusqu'au ${esc(date(d.bet_a_jour_au || d.jour))}.`
         : '<span class="pastille p-ambre">BET non chargé : déposer le planning BET (onglet Plannings) pour les alertes « études ».</span>'}</p>
       <p><a class="btn" href="/api/marche.md" id="synthese">⬇ La synthèse en Markdown (à envoyer)</a></p>
+      <p>${!co.a.length ? '<span class="pastille p-ambre">Envoi du lundi 7 h : aucun destinataire (RHI_MARCHE_A)</span>'
+        : !co.smtp ? '<span class="pastille p-ambre">Envoi du lundi 7 h : serveur de courrier non réglé (SMTP_HOST)</span>'
+        : `Envoyée chaque lundi à 7 h à ${esc(co.a.join(', '))}. <button id="envoyer-marche">✉ Envoyer maintenant</button>`}
+        ${co.dernier ? `<span class="doux">Dernier envoi : ${esc(co.dernier.jour)} — ${esc(co.dernier.statut)}</span>` : ''}</p>
     </div>` + (blocs || '<div class="rien">Aucune pose dans les 4 semaines : déposer le planning de pose.</div>');
+  if ($('#envoyer-marche')) $('#envoyer-marche').onclick = async () => {
+    try { const r = await api('/api/marche/envoyer', {method: 'POST'}); dire('Synthèse : ' + r.statut); afficher(); }
+    catch (e) { dire(e.message); }
+  };
   $('#synthese').onclick = async (e) => {
     e.preventDefault();
     try {

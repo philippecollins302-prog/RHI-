@@ -41,6 +41,8 @@ relié à l'application `rhi`. Noter son hôte
 | `RHI_CODE_TERRAIN` | le code des tablettes et téléphones (à choisir) |
 | `RHI_CODE_BUREAU` | le code du bureau (à choisir, différent) |
 | `RHI_COUT_HORAIRE` | le taux horaire moyen chargé, en €/h (en attendant les coûts par personne) |
+| `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
 | `INTERFAST_VIP` | la clé InterFast de VIP Plus — **régénérée** dans InterFast avant la mise en production (l'ancienne a circulé en clair) |
 
 `RHI_DONNEES` n'est pas à régler : `donnees/` est la valeur par défaut, et

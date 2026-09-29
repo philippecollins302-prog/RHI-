@@ -17,7 +17,8 @@ from bancs.outils import fin, verif
 
 tmp = Path(tempfile.mkdtemp())
 os.environ["RHI_DONNEES"] = str(tmp)
-for k in ("RHI_CODE_TERRAIN", "RHI_CODE_BUREAU", "INTERFAST_VIP", "RHI_ENTREPRISE"):
+for k in ("RHI_CODE_TERRAIN", "RHI_CODE_BUREAU", "INTERFAST_VIP", "RHI_ENTREPRISE", "RHI_MARCHE_A",
+          "SMTP_HOST", "SMTP_USER"):
     os.environ.pop(k, None)
 
 import app as appli  # noqa: E402
@@ -189,5 +190,37 @@ verif(t.index("## Risques prioritaires") < t.index("## À surveiller") < t.index
       "dans l'ordre de gravité")
 verif("FAB FUTURE" in t and "2ᵉ analyse d'affilée" in t, "les constats et leur répétition")
 verif("planifié jusqu'au 13/10" in t, "l'état du BET")
+
+# ── Le lundi 7 h, par courrier ──
+from rhi import courrier  # noqa: E402
+postes = []
+courrier.transport = lambda dests, sujet, texte, nom, piece: postes.append((dests, sujet, nom, piece)) or "envoye"
+base_ = appli.base.connexion(appli.app.state.chemin_base)
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 5, 8, 0)) == "sans destinataire",
+      "sans RHI_MARCHE_A : rien ne part, et c'est noté")
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 5, 9, 0)) is None, "noté : pas retenté toutes les heures")
+os.environ["RHI_MARCHE_A"] = "alexis@exemple.fr, philippe@exemple.fr"
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 12, 6, 30)) is None, "pas avant 7 h")
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 13, 8, 0)) is None, "pas un mardi")
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 12, 7, 5)) == "envoye", "lundi 7 h : part")
+dests, sujet, nom, piece = postes[0]
+verif(dests == ["alexis@exemple.fr", "philippe@exemple.fr"] and sujet == "Marche en avant — 12/10/2026"
+      and nom == "marche-en-avant-2026-10-12.md", f"à qui, quoi : {postes[0][:3]}")
+verif(piece.decode().startswith("# Marche en avant — semaine du 12/10"), "la synthèse du jour, en pièce jointe")
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 12, 8, 5)) is None and len(postes) == 1,
+      "une fois par lundi")
+courrier.transport = lambda *a: "erreur: serveur injoignable"
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 19, 7, 0)).startswith("erreur"), "une erreur est dite")
+courrier.transport = lambda *a: postes.append(a) or "envoye"
+verif(appli.marche_du_lundi(base_, dt.datetime(2026, 10, 19, 8, 0)) == "envoye", "une erreur se retente l'heure suivante")
+r = c.post("/api/marche/envoyer")
+verif(r.status_code == 200 and r.json()["statut"] == "envoye", "le bouton du bureau, n'importe quel jour")
+co = c.get("/api/marche/courrier").json()
+verif(co["a"] == ["alexis@exemple.fr", "philippe@exemple.fr"] and co["smtp"] is False and co["dernier"]["statut"] == "envoye",
+      f"le bureau voit à qui et le dernier envoi : {co}")
+verif(c.get("/api/sante").json()["courrier"] == {"smtp": False, "destinataires": 2}, "la santé dit si le courrier est réglé")
+courrier.transport = courrier._smtp
+verif(courrier.envoyer("x", "y", "z.md", b"") == "simule", "SMTP non réglé : simulé, jamais posté")
+os.environ.pop("RHI_MARCHE_A")
 
 fin("banc-marche")
