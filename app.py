@@ -163,7 +163,7 @@ def api_personnes(equipe: str | None = None, c=Depends(db)):
 @app.get("/api/menu", dependencies=[Depends(acces_terrain)])
 def api_menu(personne: str, jour: str | None = None, c=Depends(db)):
     j = dt.date.fromisoformat(jour) if jour else maintenant().date()
-    return base.menu(c, personne, j)
+    return base.menu(c, personne, j) | {"mes_heures": base.mes_heures(c, personne.upper(), j, maintenant())}
 
 
 @app.get("/api/en-cours", dependencies=[Depends(acces_terrain)])

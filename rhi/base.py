@@ -535,6 +535,15 @@ def menu(db, personne: str, jour: dt.date) -> dict:
             "motifs": [{"code": k, "libelle": v} for k, v in MOTIFS.items()]}
 
 
+def mes_heures(db, personne: str, jour: dt.date, a: dt.datetime) -> dict:
+    """Ce que la personne a pointé aujourd'hui et cette semaine, pour la
+    tablette. Qui voit ses heures pointe juste, et le signale quand il manque
+    une journée — c'est le contrôle le moins cher qui soit."""
+    lundi = jour - dt.timedelta(days=jour.weekday())
+    r = rhi(db, personne, lundi, a)
+    return {"jour": r["par_jour"][jour.weekday()], "semaine": r["total"]}
+
+
 def ecran(db, jour: dt.date) -> dict:
     """Ce que l'écran de l'atelier affiche : aujourd'hui à l'atelier, la
     semaine de la pose. Lecture seule, tiré du planning importé et des

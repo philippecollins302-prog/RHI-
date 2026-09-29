@@ -138,6 +138,8 @@ async function rafraichir() {
   etat.menu = etat.menu || lireJson(cle, null) ||
     {planning: [], taches_sans_ch: [], affaires: [], motifs: MOTIFS_SECOURS};
   etat.enCours = lireJson('rhi.c.actuel.' + etat.personnes.join('+'), etat.enCours || []);
+  // Les heures gardées datent du dernier passage : hors ligne, on ne les montre pas.
+  etat.menu = Object.assign({}, etat.menu, {mes_heures: null});
   dessiner();
 }
 
@@ -213,6 +215,8 @@ function dessiner() {
         <button class="stop" id="stop">J'arrête</button>
       </div>` : `<div class="rien">Rien ne tourne. Touche le chantier sur lequel tu démarres.</div>`}
 
+    ${m.mes_heures ? `<p class="doux mes-heures">${esc(etat.personnes.length > 1 ? etat.personnes[0] + ' : ' : '')}pointé
+      aujourd'hui ${heures(m.mes_heures.jour) || '0h'} · cette semaine ${heures(m.mes_heures.semaine) || '0h'}</p>` : ''}
     <h2>Mon planning du jour</h2>
     ${m.planning.length ? `<div class="grille">${m.planning.map((p) => `
       <button class="gros chantier" data-ch="${esc(p.ch)}" data-libelle="${esc(p.libelle)}">

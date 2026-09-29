@@ -68,6 +68,8 @@ a(16, 0)
 verif(c.post("/api/arreter", json={"personnes": ["PAUL"]}).json()["arretes"] == 1, "arrêt")
 verif(c.post("/api/arreter", json={"personnes": ["PAUL"]}).json()["arretes"] == 0,
       "arrêter deux fois ne casse rien")
+mh = c.get("/api/menu?personne=paul&jour=2026-09-28").json()["mes_heures"]
+verif(mh == {"jour": 9.0, "semaine": 9.0}, f"la tablette montre au gars ce qu'il a pointé : {mh}")
 
 # Un CH absent des plannings : accepté, signalé.
 a(7, 0, jour=29)
