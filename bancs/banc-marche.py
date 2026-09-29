@@ -68,7 +68,12 @@ fab.cell(3, col[D(2026, 10, 14)], "DEUX PIECES\nPORTE 2 VTX")                   
 fab.cell(3, col[D(2026, 7, 1)], "ANCIEN\nPERGOLA ALU")                          # fab d'avant les CH : pas de CH
 fab.cell(3, col[D(2026, 7, 2)], "ANCIEN\nMAIN COURANTE")                        # même chantier, autre pièce
 fab.cell(5, col[D(2026, 10, 14)], "CH00910")
-wb.create_sheet("planning TRAITEMENT")
+tr = wb.create_sheet("planning TRAITEMENT")
+for i, j in enumerate(jours):
+    tr.cell(2, 2 + i, dt.datetime.combine(j, dt.time()))
+tr.cell(3, col[D(2026, 9, 29)], "FAIT AVANT - CH00901/DEVIS1234")            # jusqu'au 02/10, pose le 01/10
+tr.merge_cells(start_row=3, start_column=col[D(2026, 9, 29)], end_row=3, end_column=col[D(2026, 10, 2)])
+tr.cell(4, col[D(2026, 9, 21)], "STOCK - CHCH00907/DEVIS")                   # fini avant la pose : rien à dire
 wb.save(tmp / "ate.xlsx")
 
 # ── Pose : septembre et octobre ──
@@ -123,7 +128,11 @@ def textes(nom):
     return " | ".join(x["texte"] for x in par[nom]["constats"])
 
 
-verif(niveau("FAIT AVANT") == "vert", f"fab le 15/09, pose le 01/10 : cohérent — {textes('FAIT AVANT')}")
+verif(niveau("FAIT AVANT") == "orange" and "traitement de surface" in textes("FAIT AVANT") and "02/10" in textes("FAIT AVANT"),
+      f"fab le 15/09, mais en traitement jusqu'au 02/10 pour une pose le 01/10 — {textes('FAIT AVANT')}")
+verif("traitement" not in textes("STOCK"), "un traitement fini avant la pose ne dit rien (et « CHCH00907 » se lit)")
+e = c.get("/api/ecran?jour=2026-09-28").json()
+verif([t["ch"] for t in e["traitement"]] == ["CH00901"], f"l'écran montre les envois de la semaine : {e['traitement']}")
 verif(niveau("FAB FUTURE") == "rouge" and "06/10" in textes("FAB FUTURE"),
       f"LE CAS DU 28/09 : fab le 06/10 n'est PAS réalisée, et elle tombe après la pose du 05/10 — {textes('FAB FUTURE')}")
 verif(niveau("RIEN NULLE PART") == "rouge" and "Aucune trace" in textes("RIEN NULLE PART"),

@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS etudes_bet (
   statut TEXT NOT NULL DEFAULT '',
   commentaire TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS traitements (
+  ch TEXT NOT NULL,
+  debut TEXT NOT NULL,
+  fin TEXT NOT NULL,
+  libelle TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS constats (
   jour TEXT NOT NULL,              -- jour de l'analyse
   cle TEXT NOT NULL,               -- même constat d'une analyse à l'autre
@@ -246,6 +252,11 @@ def importer(db, donnees: dict) -> dict:
                                   VALUES (?,?, 'planning', ?)
                                   ON CONFLICT(ch) DO UPDATE SET chantier=excluded.chantier
                                   WHERE affaires.chantier = '' """, (ch, noms.get(ch, ""), now))
+        if "traitements" in donnees:
+            db.execute("DELETE FROM traitements")
+            for t in donnees["traitements"]:
+                db.execute("INSERT INTO traitements VALUES (?,?,?,?)",
+                           (t["ch"], t["debut"].isoformat(), t["fin"].isoformat(), t["libelle"]))
         if "affaires" in donnees:
             db.execute("DELETE FROM lignes_prevues")
             totaux = {}
@@ -520,7 +531,12 @@ def ecran(db, jour: dt.date) -> dict:
             if r["personne"] not in e["personnes"]:
                 e["personnes"].append(r["personne"])
         pose.append({"jour": j.isoformat(), "equipes": list(equipes.values())})
-    return {"jour": jour.isoformat(), "atelier": atelier, "pose": pose}
+    traitement = [dict(r) for r in db.execute(
+        """SELECT t.ch, t.debut, t.fin, t.libelle, COALESCE(a.chantier,'') AS chantier FROM traitements t
+           LEFT JOIN affaires a ON a.ch = t.ch
+           WHERE t.fin >= ? AND t.debut <= ? ORDER BY t.debut""",
+        (lundi.isoformat(), (lundi + dt.timedelta(days=6)).isoformat()))]
+    return {"jour": jour.isoformat(), "atelier": atelier, "pose": pose, "traitement": traitement}
 
 
 # ═══════════════════════ POINTAGE ═══════════════════════
@@ -912,6 +928,16 @@ def analyser_ch(db, ch: str, pose: dt.date, jour: dt.date, libelle: str = "") ->
                                    f"Étude « {e['intitule']} » {e['statut'] or 'non close'} ({quand}) : "
                                    f"moins de 3 semaines avant la pose"
                                    + (f" — {e['commentaire']}" if e["commentaire"] else "")))
+    # Le traitement de surface, entre la fab et la pose (affaire entière : le
+    # planning TRAITEMENT ne nomme pas la pièce).
+    for r in db.execute("SELECT * FROM traitements WHERE ch=? AND fin >= ? ORDER BY fin", (ch, jour.isoformat())):
+        fin_t = dt.date.fromisoformat(r["fin"])
+        if fin_t >= pose:
+            # Orange, jamais rouge : le planning TRAITEMENT nomme le chantier,
+            # pas la pièce — l'envoi peut concerner une autre pièce de l'affaire.
+            sortie.append(_constat("orange", f"{ch}|traitement|{r['debut']}",
+                                   f"Un envoi en traitement de surface de l'affaire court jusqu'au {fin_t:%d/%m}, "
+                                   f"pose le {pose:%d/%m} — même pièce ? (le planning TRAITEMENT ne le dit pas)"))
     for l in backlog:
         com = (l["commentaire"] or "").upper()
         if any(m in com for m in MOTS_BLOQUANTS):

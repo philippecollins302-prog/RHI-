@@ -18,9 +18,23 @@ async function relire() {
   }
 }
 
+const VUES = [vueAtelier, vuePose, vueTraitement];
+
 function dessiner() {
   if (!donnees) return;
-  (vueCourante === 0 ? vueAtelier : vuePose)();
+  // La vue traitement ne passe que si la semaine a des envois.
+  const vues = (donnees.traitement || []).length ? VUES : VUES.slice(0, 2);
+  vues[vueCourante % vues.length]();
+}
+
+function vueTraitement() {
+  $('#titre').textContent = 'Traitement de surface · cette semaine';
+  const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  $('#vue').innerHTML = `<div class="mur">${donnees.traitement.map((t) => `
+    <div class="poste"><div class="qui">${esc(t.libelle)}</div>
+      <div class="ch">${esc(t.ch)}</div>
+      <div class="live">${t.debut === t.fin ? esc(date(t.debut)) : esc(date(t.debut)) + ' → ' + esc(date(t.fin))}</div>
+    </div>`).join('')}</div>`;
 }
 
 function vueAtelier() {
@@ -52,7 +66,7 @@ function horloge() {
   $('#horloge').textContent = isoParis(Date.now() + ecartMs).slice(11, 16);
 }
 
-setInterval(() => { vueCourante = 1 - vueCourante; dessiner(); }, VUE_MS);
+setInterval(() => { vueCourante += 1; dessiner(); }, VUE_MS);
 setInterval(relire, RELECTURE_MS);
 setInterval(horloge, 1000);
 horloge();

@@ -64,4 +64,14 @@ questions. Une ligne par réponse suffit.
     compte** (poseurs, intérimaires, libellés comme « SAV »). Qui doit en
     avoir un ? La liste nominative est dans l'onglet *Personnes* de RHI.
 
+### Le planning TRAITEMENT
+12. RHI lit tes envois en traitement de surface (case « CHANTIER - CH…/DEVIS »,
+    fusionnée sur les jours chez le traiteur). Mais il ne dit pas **quelle
+    pièce** part, et tes couleurs (vert clair envoyé, vert foncé livré, rose en
+    retard, orange en prévision…) ne sont écrites nulle part. Peux-tu confirmer
+    le code couleur, et ajouter la pièce dans la case (« COURREAU - CH00061 -
+    GC X7 ») ? RHI pourra alors dire « retard de traitement » avec certitude.
+    Exemple trouvé le 28/09 : un envoi de Courreau court jusqu'au 19/10, jour
+    d'une pose de Courreau — même pièce ou pas ?
+
 Merci !

@@ -169,7 +169,37 @@ def lire_atelier(classeur) -> dict:
 
     return {"personnes": sorted(set(bandes.values())),
             "affectations": affectations,
-            "affaires": lire_backlog(classeur[noms["PLAN DE CHARGE"]])}
+            "affaires": lire_backlog(classeur[noms["PLAN DE CHARGE"]]),
+            "traitements": lire_traitement(classeur[noms["PLANNING TRAITEMENT"]])
+                           if "PLANNING TRAITEMENT" in noms else []}
+
+
+def lire_traitement(ws) -> list:
+    """Le planning TRAITEMENT : les envois en traitement de surface.
+
+    Une case = un envoi (« LES GRILLONS - CH00045/DEVIS2861 »), fusionnée
+    sur les jours passés chez le traiteur. Les couleurs d'Alexis (envoyé,
+    livré, en retard…) ne sont pas lues : leur sens n'est écrit nulle part."""
+    grille = Grille(ws)
+    dates = max((_dates_colonnes(ws, r) for r in (1, 2, 3)), key=len)
+    envois, vus = [], set()
+    for r in range(3, min(ws.max_row, 150) + 1):
+        for c in dates:
+            origine = grille.origine.get((r, c), (r, c))
+            if origine in vus:
+                continue
+            v = ws.cell(*origine).value
+            codes = codes_ch(v)
+            if not codes:
+                continue
+            vus.add(origine)
+            fin_c = max((cc for (rr, cc), o in grille.origine.items() if o == origine), default=origine[1])
+            debut = dates.get(origine[1], dates[c])
+            fin = dates.get(fin_c, debut)
+            chantier = str(v).split(" - ")[0].split("\n")[0].strip()
+            for ch in codes:
+                envois.append({"ch": ch, "debut": debut, "fin": max(debut, fin), "libelle": chantier})
+    return envois
 
 
 def lire_backlog(ws) -> list:
