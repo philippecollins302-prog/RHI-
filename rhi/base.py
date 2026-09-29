@@ -819,6 +819,34 @@ def temps_perdu(db, lundi: dt.date, a: dt.datetime) -> dict:
                        for k, v in sorted(par_motif.items(), key=lambda x: -x[1]) if v >= 1 / 60]}
 
 
+def valider_tout(db, lundi: dt.date, par: str, a: dt.datetime) -> dict:
+    """Valide d'un geste les relevés qui n'ont rien à regarder.
+
+    Mis de côté, avec la raison : une alerte (sauf « pointé hors ligne », qui
+    informe sans rien dire de faux), une journée au planning sans pointage,
+    un pointage ouvert. Ceux-là, le bureau les regarde un par un — c'est
+    tout l'intérêt : le geste de masse ne valide que ce qu'on n'aurait pas
+    corrigé."""
+    valides, ecartes = [], []
+    sans_pointage = {o["personne"] for o in oublis(db, lundi, a)}
+    for p in personnes(db):
+        r = rhi(db, p["nom"], lundi, a)
+        if not r["total"] or r["validee"]:
+            continue
+        raisons = sorted({x for q in r["pointages"] for x in q["alertes"] if not x.startswith("Pointé hors ligne")})
+        if p["nom"] in sans_pointage:
+            raisons.append("journée au planning sans pointage")
+        if not raisons:
+            try:
+                valider(db, p["nom"], lundi, par)
+                valides.append(p["nom"])
+                continue
+            except ValueError as e:
+                raisons.append(str(e))
+        ecartes.append({"personne": p["nom"], "raisons": raisons})
+    return {"valides": valides, "ecartes": ecartes}
+
+
 def point_affaire(db, ch: str, a: dt.datetime) -> dict:
     """Heures réelles d'une affaire, par personne et par semaine, face au prévu."""
     aff = db.execute("SELECT * FROM affaires WHERE ch=?", (ch,)).fetchone()

@@ -60,9 +60,18 @@ async function ongletRhi() {
   const pleins = d.releves.filter((r) => r.total > 0);
   const vides = d.releves.filter((r) => r.total === 0).map((r) => r.personne);
   const tp = d.temps_perdu;
-  $('#vue').innerHTML = choixSemaine() + (pleins.length ? `
+  const bilan = vue.bilan;
+  vue.bilan = null;
+  $('#vue').innerHTML = choixSemaine() + (bilan ? `
     <div class="carte">
-      <button id="imprimer">🖨 Imprimer les RHI à signer</button>
+      <span class="pastille p-vert">${esc(bilan.valides.length)} relevés validés</span>
+      ${bilan.valides.length ? `<span class="doux">${esc(bilan.valides.join(', '))}</span>` : ''}
+      ${bilan.ecartes.map((x) => `<br><span class="pastille p-ambre">à regarder</span> <strong>${esc(x.personne)}</strong>
+        <span class="doux">${esc(x.raisons.join(' · '))}</span>`).join('')}
+    </div>` : '') + (pleins.length ? `
+    <div class="carte">
+      <button id="valider-tout">✓ Valider tous les relevés sans alerte</button>
+      <button id="imprimer">🖨 Imprimer les RHI à signer</button><br>
       <strong>Hors affaire cette semaine : ${heures(tp.hors_affaire) || '0h'}</strong>
       <span class="doux">sur ${heures(tp.total) || '0h'} pointées (${esc(tp.part)} %)</span>
       ${tp.motifs.map((m) => `<br><span class="pastille p-ambre">${esc(m.libelle)} · ${heures(m.heures)}</span>
@@ -87,13 +96,26 @@ async function ongletRhi() {
     (vides.length ? `<p class="doux">Rien pointé cette semaine : ${esc(vides.join(', '))}</p>` : '');
   brancherSemaine();
   if ($('#imprimer')) $('#imprimer').onclick = () => imprimerRhi(pleins, d.lundi);
+  const signataire = () => {
+    const qui = (lire('rhi.qui', '') || prompt('Votre nom (il signe la validation) :') || '').trim();
+    if (qui) ecrire('rhi.qui', qui);
+    return qui;
+  };
+  if ($('#valider-tout')) $('#valider-tout').onclick = async () => {
+    const qui = signataire();
+    if (!qui) return;
+    try {
+      const r = await api('/api/validations/toutes', {method: 'POST', json: {semaine: vue.semaine, qui}});
+      vue.bilan = r;
+      afficher();
+    } catch (e) { dire(e.message); }
+  };
   document.querySelectorAll('[data-valider]').forEach((b) => b.onclick = async () => {
-    const qui = lire('rhi.qui', '') || prompt('Votre nom (il signe la validation) :') || '';
-    if (!qui.trim()) return;
-    ecrire('rhi.qui', qui.trim());
+    const qui = signataire();
+    if (!qui) return;
     try {
       await api('/api/validations', {method: 'POST',
-        json: {personne: b.dataset.valider, semaine: vue.semaine, qui: qui.trim()}});
+        json: {personne: b.dataset.valider, semaine: vue.semaine, qui}});
       afficher();
     } catch (e) { dire(e.message); }
   });

@@ -566,6 +566,16 @@ def api_valider(v: Validation, c=Depends(db)):
         raise HTTPException(409, str(e))
 
 
+class ValidationDeMasse(BaseModel):
+    semaine: str
+    qui: str
+
+
+@app.post("/api/validations/toutes", dependencies=[Depends(acces_bureau)])
+def api_valider_tout(v: ValidationDeMasse, c=Depends(db)):
+    return base.valider_tout(c, _lundi(v.semaine), v.qui, maintenant())
+
+
 @app.delete("/api/validations", dependencies=[Depends(acces_bureau)])
 def api_devalider(personne: str, semaine: str, c=Depends(db)):
     try:

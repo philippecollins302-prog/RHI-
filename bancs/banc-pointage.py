@@ -200,6 +200,19 @@ verif([m["code"] for m in c.get("/api/rhi?semaine=2026-09-28").json()["temps_per
 p0 = c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]["pointages"]
 verif(any(x["motif_libelle"] == "Attente matière / plans" for x in p0), "le motif en clair, pour la feuille imprimée")
 
+# ── Valider d'un geste ce qui n'a rien à regarder ──
+r = c.post("/api/validations/toutes", json={"semaine": "2026-09-28", "qui": "Alexis"}).json()
+verif(r["valides"] == ["JEAN", "MARC"], f"les relevés propres sont validés : {r}")
+verif(r["ecartes"] == [{"personne": "LUC", "raisons": ["journée au planning sans pointage"]},
+                       {"personne": "PAUL", "raisons": ["CH saisi à la main, absent des plannings"]}],
+      "les autres sont mis de côté, avec la raison — le geste de masse ne valide que ce qu'on n'aurait pas corrigé")
+verif(c.get("/api/rhi?personne=JEAN&semaine=2026-09-28").json()["releves"][0]["validee"]["par"] == "Alexis",
+      "signé du nom de qui a validé")
+r = c.post("/api/validations/toutes", json={"semaine": "2026-09-28", "qui": "Alexis"}).json()
+verif(r["valides"] == [], "rejoué : rien de validé deux fois")
+for n in ("JEAN", "MARC"):
+    c.delete(f"/api/validations?personne={n}&semaine=2026-09-28")
+
 # ── Codes d'accès ──
 os.environ["RHI_CODE_TERRAIN"] = "atelier"
 os.environ["RHI_CODE_BUREAU"] = "bureau"
