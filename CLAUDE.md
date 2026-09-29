@@ -70,6 +70,18 @@ est faite.
 - **Le CH est la seule clé fiable.** Les noms de chantier varient d'un
   fichier à l'autre (LES CIGALES/LES CIGLAES, ABCD/ACBD).
 
+## Marche en avant (bureau)
+L'analyse du lundi d'Alexis (études → fab → pose), jusqu'ici faite à la main
+par un agent sur les Excel, reprise en code (`base.marche`) parce que la
+synthèse du 28/09/2026 comptait comme « réalisées » des fabrications futures.
+Règles : une fab n'est **faite** que datée d'avant le jour de l'analyse ;
+on juge chaque **pièce** (mots du libellé : PORTE, GRILLE, GC…), pas
+l'affaire entière ; les lignes et cases **sans CH** (plannings d'avant les
+CH) se rapprochent par le nom du chantier ET les mots de la pièce, jamais par
+le nom seul ; « S11 » sans année = l'année la plus récente à moins de 8
+semaines devant. Le BET se dépose pour cette analyse seulement (il ne pointe
+pas). Les constats sont gardés par jour : « 3ᵉ analyse d'affilée ».
+
 ## InterFast — voir docs/interfast.md
 - Les CH sont les **chantiers** InterFast (`rechercher_chantiers`, « Réf:
   CH00xxx ») : RHI les relit, en lecture seule (`POST /api/interfast/chantiers`,

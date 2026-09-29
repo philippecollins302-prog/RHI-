@@ -393,6 +393,13 @@ async def api_interfast_montants(c=Depends(db)):
     return base.importer_montants(c, lus)
 
 
+@app.get("/api/marche", dependencies=[Depends(acces_bureau)])
+def api_marche(jour: str | None = None, semaines: int = 4, c=Depends(db)):
+    """La marche en avant : chaque pose des semaines à venir face à son amont."""
+    j = dt.date.fromisoformat(jour) if jour else maintenant().date()
+    return base.marche(c, j, max(1, min(semaines, 12)))
+
+
 @app.get("/api/interfast/envois", dependencies=[Depends(acces_bureau)])
 def api_envois(semaine: str | None = None, c=Depends(db)):
     """À blanc : ce qui partirait vers InterFast pour une semaine validée."""

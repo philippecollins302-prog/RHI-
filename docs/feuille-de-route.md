@@ -41,6 +41,7 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 ## Plus tard
 - ~~Écran d'atelier qui fait défiler atelier / pose~~ — fait (`/ecran`).
   Reste le planning TRAITEMENT (départs en traitement de surface) à y ajouter.
-- Analyse de la marche en avant BET → fab → traitement → pose, chaque lundi
-  à 7 h (reprise de l'agent de synthèse d'Alexis, en code et avec bancs :
-  une date de fabrication future n'est jamais « réalisée »).
+- ~~Analyse de la marche en avant BET → fab → pose~~ — faite (bureau →
+  *Marche en avant*), en code et avec bancs : une date de fabrication future
+  n'est jamais « réalisée ». Reste : l'envoi automatique du lundi 7 h (mail),
+  et le planning TRAITEMENT dans la chaîne.

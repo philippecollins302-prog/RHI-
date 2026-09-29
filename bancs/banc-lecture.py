@@ -51,9 +51,9 @@ verif(lecture.personnes_equipe("THEO & NINO\n(Resp. LC)") == ["THEO", "NINO"], "
 fabrique.bet(tmp / "bet.xlsx")
 try:
     lecture.lire(tmp / "bet.xlsx")
-    verif(False, "le BET doit être refusé")
+    verif(False, "un BET sans ligne « N° Affaire » doit être refusé")
 except lecture.FichierInattendu as e:
-    verif("bureau d'études" in str(e), "refus du BET expliqué")
+    verif("N° Affaire" in str(e), "BET illisible : refus expliqué")
 (tmp / "faux.xlsx").write_text("pas un classeur")
 try:
     lecture.lire(tmp / "faux.xlsx")

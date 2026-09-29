@@ -10,10 +10,13 @@ plutôt que d'être refusé. Tout ce qui est douteux se corrige au bureau, rien
 ne se refuse sur la tablette.
 """
 import datetime as dt
+import re
 import os
 import sqlite3
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from .textes import normaliser
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -51,6 +54,21 @@ CREATE TABLE IF NOT EXISTS utilisateurs_interfast (
   role TEXT NOT NULL DEFAULT '',
   archive INTEGER NOT NULL DEFAULT 0,
   cout REAL
+);
+CREATE TABLE IF NOT EXISTS etudes_bet (
+  ch TEXT,                         -- NULL : étude sans CH (le BET n'en met pas toujours)
+  chantier TEXT NOT NULL DEFAULT '',
+  intitule TEXT NOT NULL,
+  debut TEXT, fin TEXT,
+  statut TEXT NOT NULL DEFAULT '',
+  commentaire TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS constats (
+  jour TEXT NOT NULL,              -- jour de l'analyse
+  cle TEXT NOT NULL,               -- même constat d'une analyse à l'autre
+  niveau TEXT NOT NULL,
+  texte TEXT NOT NULL,
+  PRIMARY KEY (jour, cle)
 );
 CREATE TABLE IF NOT EXISTS validations (
   personne TEXT NOT NULL,
@@ -156,6 +174,9 @@ AJOUTS = {
     # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
     # ligne, rejoué au retour du réseau.
     "pointages": [("recu", "TEXT")],
+    # Pour la marche en avant : semaines de fab et commentaire du plan de charge.
+    "lignes_prevues": [("semaines", "TEXT NOT NULL DEFAULT ''"), ("commentaire", "TEXT NOT NULL DEFAULT ''"),
+                       ("chantier", "TEXT NOT NULL DEFAULT ''")],
 }
 
 # Écart au-delà duquel un geste est dit « rejoué » (hors ligne).
@@ -199,6 +220,16 @@ def importer(db, donnees: dict) -> dict:
     pointages, eux, ne sont jamais touchés par un import."""
     origine = donnees["nature"]
     now = _iso(maintenant())
+    if origine == "bet":
+        with db:
+            db.execute("DELETE FROM etudes_bet")
+            for e in donnees["etudes"]:
+                for ch in (e["codes"] or [None]):
+                    db.execute("INSERT INTO etudes_bet VALUES (?,?,?,?,?,?,?)",
+                               (ch, e["chantier"], e["intitule"],
+                                e["debut"].isoformat() if e["debut"] else None,
+                                e["fin"].isoformat() if e["fin"] else None, e["statut"], e["commentaire"]))
+        return {"nature": "bet", "personnes": 0, "affectations": 0, "etudes": len(donnees["etudes"])}
     with db:
         for nom in donnees["personnes"]:
             db.execute("""INSERT INTO personnes(nom, equipe, vu_le) VALUES (?,?,?)
@@ -219,10 +250,14 @@ def importer(db, donnees: dict) -> dict:
             db.execute("DELETE FROM lignes_prevues")
             totaux = {}
             for l in donnees["affaires"]:
+                # Les lignes sans CH sont gardées (ch = '') : la marche en avant
+                # les rapproche d'une pose par le nom du chantier.
+                db.execute("""INSERT INTO lignes_prevues(ch, designation, heures, semaines, commentaire, chantier)
+                              VALUES (?,?,?,?,?,?)""",
+                           (l["ch"] or "", l["designation"], l["heures"], ",".join(map(str, l["semaines"])),
+                            l["commentaire"], l["chantier"]))
                 if not l["ch"]:
                     continue
-                db.execute("INSERT INTO lignes_prevues VALUES (?,?,?)",
-                           (l["ch"], l["designation"], l["heures"]))
                 totaux.setdefault(l["ch"], [l["chantier"], l["conduc"], 0.0])
                 totaux[l["ch"]][2] += l["heures"] or 0
             for ch, (chantier, conduc, h) in totaux.items():
@@ -727,6 +762,233 @@ def affaires_pointees(db, a: dt.datetime) -> list:
                        "heures_prevues": r["heures_prevues"],
                        "consomme_pct": round(100 * h / r["heures_prevues"]) if r["heures_prevues"] else None})
     return sorted(sortie, key=lambda x: -(x["consomme_pct"] or 0) if x["heures_prevues"] else -x["heures_reelles"])
+
+
+# ═══════════════════════ MARCHE EN AVANT ═══════════════════════
+#
+# L'analyse du lundi d'Alexis (études → fabrication → pose), jusqu'ici faite
+# à la main par un agent Claude sur les Excel. Reprise en code pour une
+# raison écrite dans sa synthèse du 28/09/2026 : elle y comptait comme
+# « réalisées » des fabrications datées du 06/10 et du 12/10 — et sortait
+# deux affaires du suivi prioritaire sur cette erreur. Ici, une fabrication
+# n'est RÉALISÉE que si elle est datée d'avant le jour de l'analyse.
+
+MOTS_BLOQUANTS = ("ATTENTE", "MANQUE", "BLOQU", "EN COURS DE VALIDATION")
+DELAI_ETUDES_J = 21          # « Délais minimum 3 semaines » (planning BET)
+ECART_STOCK_J = 120          # fab plus de 4 mois avant la pose : à confirmer
+URGENT_J = 7
+
+NIVEAUX = {"rouge": 0, "orange": 1, "gris": 2, "vert": 3}
+
+
+AVANCE_MAX_J = 56   # le plan de charge ne planifie pas au-delà de ~8 semaines
+
+
+def semaine_proche(semaine: int, jour: dt.date) -> tuple:
+    """(lundi, dimanche) de la semaine ISO `semaine` telle que le plan de
+    charge l'entend — il écrit « S36 » sans l'année, à cheval sur deux ans.
+
+    Pas « la plus proche » : S11 lue le 28/09/2026 tombait en mars 2027 (plus
+    proche que mars 2026) et passait pour une fab future. Les semaines du plan
+    de charge sont passées ou proches : on prend l'année la plus récente dont
+    la semaine ne tombe pas à plus de 8 semaines devant."""
+    candidats = []
+    for annee in (jour.year - 1, jour.year, jour.year + 1):
+        try:
+            lundi = dt.date.fromisocalendar(annee, semaine, 1)
+        except ValueError:
+            continue
+        if (lundi - jour).days <= AVANCE_MAX_J:
+            candidats.append(lundi)
+    lundi = max(candidats)
+    return lundi, lundi + dt.timedelta(days=6)
+
+
+# Les mots qui disent QUOI (une porte, une grille, un garde-corps) — pas
+# les mots de geste ou de remplissage.
+MOTS_VIDES = {"POSE", "REPRISE", "FINALISATION", "FINITION", "MODIF", "MODIFICATION", "DEPOSE",
+              "PROVISOIRE", "CHANTIER", "TRAVAUX", "AVEC", "POUR", "SUITE", "DIVERS", "FAB",
+              "FABRICATION", "ETUDE", "VISA", "EXE", "REPOSE", "REFABRICATION", "MONTAGE", "SUR",
+              "DES", "LES", "UNE", "ALFA", "SGM"}
+MOTS_COURTS = {"GC", "MC", "BSO", "TS", "OM", "VS", "PMR"}
+
+
+def mots(texte) -> set:
+    """« PORTES (X5) / GRILLES ACCOUSTIQUE (x2) » → {PORTE, GRILLE, ACCOUSTIQUE}."""
+    sortie = set()
+    for m in normaliser(texte).split():
+        if m in MOTS_COURTS:
+            sortie.add(m)
+        elif len(m) >= 4 and not m.isdigit() and m not in MOTS_VIDES and not re.fullmatch(r"X\d+", m):
+            sortie.add(m[:-1] if len(m) > 4 and m[-1] in "SX" else m)
+    return sortie
+
+
+def meme_chantier(a, b) -> bool:
+    a, b = normaliser(a), normaliser(b)
+    return bool(a and b) and (a == b or (min(len(a), len(b)) >= 4 and (a in b or b in a)))
+
+
+def _constat(niveau, cle, texte):
+    return {"niveau": niveau, "cle": cle, "texte": texte}
+
+
+def analyser_ch(db, ch: str, pose: dt.date, jour: dt.date, libelle: str = "") -> list:
+    """Les constats d'un CH pour une pose donnée.
+
+    Une affaire a plusieurs pièces (des portes, une pergola…) : la pose d'une
+    pièce se juge sur l'amont de CETTE pièce. On rapproche par les mots du
+    libellé (PORTE, GRILLE, GC…) ; s'ils ne rapprochent rien alors que
+    l'affaire a de l'amont, c'est la pièce qui n'a pas de trace — le cas
+    « Assas, portes (X5) » de la synthèse d'Alexis. Les lignes du plan de
+    charge sans CH sont rapprochées par le nom du chantier."""
+    morceaux = [m for m in libelle.split(" / ") if m]
+    chantier, cherches = (morceaux[0] if morceaux else ""), mots(" ".join(morceaux[1:]))
+    fab_lignes = [(dt.date.fromisoformat(r["jour"]), r["libelle"]) for r in db.execute(
+        "SELECT DISTINCT jour, libelle FROM planning WHERE origine='atelier' AND ch=?", (ch,))]
+    # Le CH n'est saisi au planning FAB que depuis peu : une fab plus ancienne
+    # n'a que son libellé (« MAISON MED ASSAS / PERGOLA ALU »). Rapprochée par
+    # le nom du chantier ET les mots de la pièce, jamais par le nom seul.
+    fab_par_nom = [(dt.date.fromisoformat(r["jour"]), r["libelle"]) for r in db.execute(
+        "SELECT DISTINCT jour, libelle FROM planning WHERE origine='atelier' AND ch IS NULL")
+        if meme_chantier(r["libelle"].split(" / ")[0], chantier)
+        and (mots(" ".join(r["libelle"].split(" / ")[1:])) & cherches)]
+    fab_lignes += fab_par_nom
+    backlog = [dict(r) for r in db.execute("SELECT * FROM lignes_prevues WHERE ch=?", (ch,))]
+    par_nom = [dict(r) | {"par_nom": True} for r in db.execute("SELECT * FROM lignes_prevues WHERE ch=''")
+               if meme_chantier(r["chantier"], chantier)]
+    etudes = [dict(r) for r in db.execute("SELECT * FROM etudes_bet WHERE ch=?", (ch,))]
+    j = (pose - jour).days
+    sortie = []
+    if not fab_lignes and not backlog and not etudes and not par_nom:
+        return [_constat("rouge" if j <= URGENT_J else "orange", f"{ch}|aucune-trace",
+                         "Aucune trace amont : ni plan de charge, ni planning FAB, ni BET")]
+    if cherches:
+        f2 = [x for x in fab_lignes if mots(x[1]) & cherches]
+        b2 = [l for l in backlog + par_nom if mots(l["designation"]) & cherches]
+        e2 = [e for e in etudes if mots(e["intitule"]) & cherches]
+        if not (f2 or b2 or e2):
+            return [_constat("rouge" if j <= URGENT_J else "orange", f"{ch}|piece|{libelle[:60]}",
+                             "L'affaire a de l'amont, mais rien au plan de charge, au planning FAB ni au BET "
+                             f"ne ressemble à « {' / '.join(morceaux[1:])} » (approvisionnement extérieur ?)")]
+        fab_lignes, backlog, etudes = f2, b2, e2
+    else:
+        backlog = backlog + par_nom
+    fab = sorted({d for d, _ in fab_lignes})
+    faites = [d for d in fab if d < jour]
+    prevues = [d for d in fab if d >= jour]
+    if any(l.get("par_nom") for l in backlog):
+        sortie.append(_constat("vert", f"{ch}|par-nom", "Plan de charge rapproché par le nom du chantier (ligne sans CH)"))
+    if fab_par_nom and set(fab_par_nom) & set(fab_lignes):
+        sortie.append(_constat("vert", f"{ch}|fab-par-nom",
+                               "Planning FAB rapproché par le nom du chantier et de la pièce (cases sans CH)"))
+    if prevues and prevues[-1] >= pose:
+        sortie.append(_constat("rouge", f"{ch}|fab-apres-pose",
+                               f"Fabrication prévue jusqu'au {prevues[-1]:%d/%m}, pour une pose le {pose:%d/%m}"))
+    elif prevues and not faites and (pose - prevues[-1]).days < 2:
+        sortie.append(_constat("orange", f"{ch}|fab-juste-avant",
+                               f"Fabrication finie le {prevues[-1]:%d/%m} seulement, pose le {pose:%d/%m}"))
+    if not fab and backlog:
+        semaines = sorted({int(x) for l in backlog for x in (l["semaines"] or "").split(",") if x})
+        if not semaines:
+            sortie.append(_constat("orange", f"{ch}|sans-semaine",
+                                   "Au plan de charge, mais sans semaine de fab ni trace au planning FAB"))
+        else:
+            fin_s = semaine_proche(semaines[-1], jour)[1]
+            if fin_s < jour:
+                sortie.append(_constat("orange", f"{ch}|backlog-passe",
+                                       f"Plan de charge : fab en S{semaines[-1]:02d} (passée), "
+                                       "mais aucune trace au planning FAB"))
+            elif fin_s >= pose:
+                sortie.append(_constat("rouge", f"{ch}|backlog-apres-pose",
+                                       f"Plan de charge : fab en S{semaines[-1]:02d}, pour une pose le {pose:%d/%m}"))
+    for e in etudes:
+        if e["statut"] in ("termine", "annule"):
+            continue
+        fin_e = dt.date.fromisoformat(e["fin"]) if e["fin"] else None
+        if fin_e is None or (pose - fin_e).days < DELAI_ETUDES_J:
+            quand = f"prévue le {fin_e:%d/%m}" if fin_e else "sans date"
+            sortie.append(_constat("rouge" if j <= 2 * URGENT_J else "orange", f"{ch}|etude|{e['intitule'][:40]}",
+                                   f"Étude « {e['intitule']} » {e['statut'] or 'non close'} ({quand}) : "
+                                   f"moins de 3 semaines avant la pose"
+                                   + (f" — {e['commentaire']}" if e["commentaire"] else "")))
+    for l in backlog:
+        com = (l["commentaire"] or "").upper()
+        if any(m in com for m in MOTS_BLOQUANTS):
+            if faites:
+                sortie.append(_constat("gris", f"{ch}|commentaire-fige|{l['designation'][:40]}",
+                                       f"Commentaire « {l['commentaire']} » toujours au plan de charge, "
+                                       f"alors que la fab a eu lieu (dernière le {faites[-1]:%d/%m}) : à nettoyer"))
+            else:
+                sortie.append(_constat("orange", f"{ch}|commentaire|{l['designation'][:40]}",
+                                       f"« {l['designation']} » : {l['commentaire']}"))
+    for e in etudes:
+        com = (e["commentaire"] or "").upper()
+        if e["statut"] == "termine" and any(m in com for m in MOTS_BLOQUANTS):
+            sortie.append(_constat("gris", f"{ch}|bet-fige|{e['intitule'][:40]}",
+                                   f"BET : étude « {e['intitule']} » terminée, mais toujours « {e['commentaire']} »"
+                                   " : à confirmer ou nettoyer"))
+    if faites and (pose - faites[-1]).days > ECART_STOCK_J:
+        sortie.append(_constat("gris", f"{ch}|ecart",
+                               f"Fabriqué le {faites[-1]:%d/%m/%Y}, posé le {pose:%d/%m} : plus de 4 mois d'écart "
+                               "(stock en attente de site ?) — à confirmer"))
+    if all(c["niveau"] == "vert" for c in sortie):
+        detail = (f"fab faite (dernière le {faites[-1]:%d/%m})" if faites else
+                  f"fab prévue jusqu'au {prevues[-1]:%d/%m}" if prevues else "au plan de charge")
+        sortie.append(_constat("vert", f"{ch}|ok", f"Cohérent : {detail}"))
+    return sortie
+
+
+def marche(db, jour: dt.date, semaines: int = 4, enregistrer: bool = True) -> dict:
+    """Toutes les poses des `semaines` à venir, chacune avec ses constats,
+    et pour chaque constat le nombre d'analyses consécutives où il revient."""
+    fin = jour + dt.timedelta(weeks=semaines)
+    poses = {}
+    for r in db.execute("""SELECT jour, libelle, ch, personne FROM planning WHERE origine='pose'
+                           AND jour >= ? AND jour < ? ORDER BY jour""", (jour.isoformat(), fin.isoformat())):
+        cle = (r["libelle"], r["ch"])
+        p = poses.setdefault(cle, {"libelle": r["libelle"], "ch": r["ch"], "jours": [], "personnes": []})
+        if r["jour"] not in p["jours"]:
+            p["jours"].append(r["jour"])
+        if r["personne"] not in p["personnes"]:
+            p["personnes"].append(r["personne"])
+    lignes = []
+    for p in poses.values():
+        premiere = dt.date.fromisoformat(p["jours"][0])
+        if p["ch"]:
+            constats = analyser_ch(db, p["ch"], premiere, jour, p["libelle"])
+        else:
+            constats = [_constat("orange" if (premiere - jour).days > URGENT_J else "rouge",
+                                 f"sans-ch|{p['libelle'][:60]}",
+                                 "Pose sans N° d'affaire : rapprochement impossible avec l'amont")]
+        niveau = min((c["niveau"] for c in constats), key=NIVEAUX.get)
+        lignes.append({**p, "pose": premiere.isoformat(), "dans_j": (premiere - jour).days,
+                       "niveau": niveau, "constats": constats})
+    lignes.sort(key=lambda x: (NIVEAUX[x["niveau"]], x["pose"]))
+    if enregistrer:
+        with db:
+            db.execute("DELETE FROM constats WHERE jour=?", (jour.isoformat(),))
+            for l in lignes:
+                for c in l["constats"]:
+                    if c["niveau"] != "vert":
+                        db.execute("INSERT OR IGNORE INTO constats VALUES (?,?,?,?)",
+                                   (jour.isoformat(), c["cle"], c["niveau"], c["texte"]))
+    anterieures = [r[0] for r in db.execute(
+        "SELECT DISTINCT jour FROM constats WHERE jour < ? ORDER BY jour DESC", (jour.isoformat(),))]
+    for l in lignes:
+        for c in l["constats"]:
+            n = 1
+            for j_ant in anterieures:
+                if db.execute("SELECT 1 FROM constats WHERE jour=? AND cle=?", (j_ant, c["cle"])).fetchone():
+                    n += 1
+                else:
+                    break
+            c["consecutifs"] = n if c["niveau"] != "vert" else 0
+    bet_a_jour = db.execute("SELECT MAX(fin) FROM etudes_bet").fetchone()[0]
+    return {"jour": jour.isoformat(), "jusqu_au": fin.isoformat(), "lignes": lignes,
+            "compte": {n: sum(1 for l in lignes if l["niveau"] == n) for n in NIVEAUX},
+            "bet_charge": db.execute("SELECT COUNT(*) FROM etudes_bet").fetchone()[0] > 0,
+            "bet_a_jour_au": bet_a_jour}
 
 
 # ═══════════════════════ VERS INTERFAST (à blanc) ═══════════════════════

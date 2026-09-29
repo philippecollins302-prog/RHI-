@@ -36,4 +36,11 @@ verif(chantiers_de("LES PINS / STRUCTURE BALCON / LE PORT / POSE PORTAIL", ["CH0
 verif(chantiers_de("LE PORT / PORTAIL", ["CH00902", "CH00901"]) == {},
       "compte qui ne tombe pas juste : pas de nom plutôt qu'un faux")
 
+from rhi.base import semaine_proche
+L = dt.date(2026, 9, 28)
+verif(semaine_proche(11, L)[0] == dt.date(2026, 3, 9), "S11 lue fin septembre : mars 2026, pas mars 2027")
+verif(semaine_proche(49, L)[0] == dt.date(2025, 12, 1), "S49 : décembre 2025 (le haut du plan de charge)")
+verif(semaine_proche(43, L)[0] == dt.date(2026, 10, 19), "S43 : dans trois semaines")
+verif(semaine_proche(2, dt.date(2026, 12, 21))[0] == dt.date(2027, 1, 11), "S02 lue en décembre : janvier suivant")
+
 fin("banc-textes")

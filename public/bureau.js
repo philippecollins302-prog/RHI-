@@ -48,7 +48,7 @@ async function afficher() {
   try {
     await ({rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
             direct: ongletDirect, plannings: ongletPlannings,
-            personnes: ongletPersonnes, envois: ongletEnvois}[vue.onglet] || ongletRhi)();
+            personnes: ongletPersonnes, envois: ongletEnvois, marche: ongletMarche}[vue.onglet] || ongletRhi)();
   } catch (e) {
     $('#vue').innerHTML = `<div class="rien">Erreur : ${esc(e.message)}</div>`;
   }
@@ -334,6 +334,33 @@ async function ongletEnvois() {
       </tr>`).join('')}
     </table></div>` : '<div class="rien">Aucun RHI validé cette semaine : rien ne partirait.</div>');
   brancherSemaine();
+}
+
+// ── Marche en avant : chaque pose à venir face à ses études et sa fab ──
+async function ongletMarche() {
+  const d = await api('/api/marche');
+  const cl = {rouge: 'p-rouge', orange: 'p-ambre', gris: '', vert: 'p-vert'};
+  const titre = {rouge: 'Risques prioritaires', orange: 'À surveiller', gris: 'Données à nettoyer', vert: 'Cohérent'};
+  const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  const blocs = ['rouge', 'orange', 'gris', 'vert'].map((n) => {
+    const ls = d.lignes.filter((l) => l.niveau === n);
+    if (!ls.length) return '';
+    return `<h2>${esc(titre[n])} · ${esc(ls.length)}</h2>` + ls.map((l) => `
+      <div class="carte">
+        <span class="pastille ${esc(cl[n])}">pose ${esc(date(l.pose))} · J${l.dans_j >= 0 ? '+' : ''}${esc(l.dans_j)}</span>
+        <strong>${esc(l.libelle)}</strong> <span class="ch">${esc(l.ch || 'sans CH')}</span>
+        <span class="doux">· ${esc(l.personnes.join(', '))}</span>
+        <ul>${l.constats.map((x) => `<li>${esc(x.texte)}${x.consecutifs > 1
+          ? ` <span class="pastille p-ambre">${esc(x.consecutifs)}ᵉ analyse d'affilée</span>` : ''}</li>`).join('')}</ul>
+      </div>`).join('');
+  }).join('');
+  $('#vue').innerHTML = `
+    <div class="carte">
+      <p>Poses du ${esc(date(d.jour))} au ${esc(date(d.jusqu_au))}, face au plan de charge, au planning FAB et au BET.
+        Une fabrication n'est comptée <strong>faite</strong> que si elle est datée d'avant aujourd'hui.</p>
+      <p>${d.bet_charge ? `BET chargé, planifié jusqu'au ${esc(date(d.bet_a_jour_au || d.jour))}.`
+        : '<span class="pastille p-ambre">BET non chargé : déposer le planning BET (onglet Plannings) pour les alertes « études ».</span>'}</p>
+    </div>` + (blocs || '<div class="rien">Aucune pose dans les 4 semaines : déposer le planning de pose.</div>');
 }
 
 afficher();

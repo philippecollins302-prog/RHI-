@@ -40,7 +40,7 @@ for f in ("ate.xlsx", "pose.xlsx"):
     verif(r.status_code == 200, f"import {f} : {r.text}")
 fabrique.bet(tmp / "bet.xlsx")
 r = c.post("/api/plannings", files={"fichier": ("bet.xlsx", (tmp / "bet.xlsx").read_bytes())})
-verif(r.status_code == 422 and "bureau d'études" in r.json()["detail"], "BET refusé avec la raison")
+verif(r.status_code == 422 and "N° Affaire" in r.json()["detail"], "BET illisible refusé avec la raison")
 
 verif([p["nom"] for p in c.get("/api/personnes?equipe=atelier").json()] == ["JEAN", "PAUL"], "atelier")
 verif([p["nom"] for p in c.get("/api/personnes?equipe=pose").json()] == ["LUC", "MARC"], "pose")

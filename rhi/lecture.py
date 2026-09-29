@@ -82,8 +82,9 @@ def nature(classeur) -> tuple:
     if any(re.fullmatch(r"20\d\d", n) for n in noms):
         return "pose", "ALFA"
     if "PLANNING DESSINS" in noms:
-        raise FichierInattendu("Planning du bureau d'études : le BET ne pointe pas "
-                               "(il est en frais), RHI n'en a pas besoin.")
+        # Le BET ne pointe pas (il est en frais) : son planning ne sert qu'à
+        # la marche en avant (études → fab → pose).
+        return "bet", "VIP"
     raise FichierInattendu("Ni planning atelier, ni planning pose : onglets "
                            + ", ".join(classeur.sheetnames[:6]))
 
@@ -296,11 +297,58 @@ def lire(chemin, entreprise: str = "VIP") -> dict:
     if sienne != entreprise:
         raise FichierInattendu(f"Planning {genre} de {ENTREPRISES[sienne]} : il se dépose sur le RHI "
                                f"de cette entreprise, pas sur celui de {ENTREPRISES[entreprise]}.")
-    lecteurs = {("atelier", "VIP"): lire_atelier, ("pose", "VIP"): lire_pose,
+    lecteurs = {("atelier", "VIP"): lire_atelier, ("pose", "VIP"): lire_pose, ("bet", "VIP"): lire_bet,
                 ("atelier", "ALFA"): lire_atelier_men, ("pose", "ALFA"): lire_pose_men}
     donnees = lecteurs[(genre, sienne)](classeur)
     donnees["nature"] = genre
     return donnees
+
+
+# ═══════════════════════ BET (serrurerie) ═══════════════════════
+
+def lire_bet(classeur) -> dict:
+    """Le plan de charge du bureau d'études : une ligne par étude.
+
+    Colonnes repérées par leur titre (le fichier a été « entièrement refondu »
+    en septembre 2026, d'après la synthèse d'Alexis : un index fixe aurait
+    cassé en silence). Les dates sont saisies à la main (« 14,15/09/2026 ») :
+    textes.periode_bet() les lit."""
+    from .textes import periode_bet
+    noms = {normaliser(n): n for n in classeur.sheetnames}
+    ws = classeur[noms["PLAN DE CHARGE"]]
+    entete, cols = None, {}
+    for r in range(1, 15):
+        titres = {normaliser(ws.cell(r, c).value): c for c in range(1, ws.max_column + 1)}
+        if "N AFFAIRE" in titres:
+            entete, cols = r, titres
+            break
+    if entete is None:
+        raise FichierInattendu("Planning BET : ligne « N° Affaire » introuvable.")
+
+    def val(r, *titres):
+        for t in titres:
+            if t in cols:
+                v = ws.cell(r, cols[t]).value
+                return v
+        return None
+
+    etudes = []
+    for r in range(entete + 1, ws.max_row + 1):
+        intitule = val(r, "INTITULE DES ETUDES")
+        if not intitule:
+            continue
+        periode = periode_bet(val(r, "DATE PLANIFIEE"))
+        etudes.append({
+            "codes": codes_ch(val(r, "N AFFAIRE")),
+            "chantier": " / ".join(lignes(val(r, "NOM DU CHANTIER"))),
+            "intitule": " ".join(str(intitule).split()),
+            "type": str(val(r, "TYPE ETUDES") or "").strip(),
+            "debut": periode[0] if periode else None,
+            "fin": periode[1] if periode else None,
+            "statut": normaliser(val(r, "STATUT PLANNING")).lower(),
+            "commentaire": " ".join(str(val(r, "COMMENTAIRES") or "").split()),
+        })
+    return {"personnes": [], "affectations": [], "etudes": etudes}
 
 
 # ═══════════════════════ MENUISERIE (ALFA) ═══════════════════════

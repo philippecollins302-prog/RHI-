@@ -139,3 +139,24 @@ def pose_men(chemin):
     ws["A10"], ws["A11"] = "N° AFFAIRE", "CA"
     ws.cell(9, 2, "CHANTIER X")
     wb.save(chemin)
+
+
+def bet_complet(chemin, etudes):
+    """Un plan de charge BET de la forme refondue en septembre 2026."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Plan de charge"
+    ws["A1"] = "PLAN DE CHARGE – BUREAU D'ÉTUDES"
+    titres = ["N° Affaire", "Chargé d'affaire", "Nom du chantier", "Intitulé des études", "Type études",
+              "Priorité", "Dessinateur", "Date planifiée", "Statut planning", "Relevé sur site", "Commentaires"]
+    for i, t in enumerate(titres, start=1):
+        ws.cell(5, i, t)
+    for r, (ch, intitule, date, statut, commentaire) in enumerate(etudes, start=6):
+        ws.cell(r, 1, ch)
+        ws.cell(r, 3, "CHANTIER")
+        ws.cell(r, 4, intitule)
+        ws.cell(r, 8, date)
+        ws.cell(r, 9, statut)
+        ws.cell(r, 11, commentaire)
+    wb.create_sheet("Planning Dessins")
+    wb.save(chemin)
