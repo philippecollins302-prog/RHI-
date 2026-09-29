@@ -161,7 +161,25 @@ async function ongletPlannings() {
         Chaque dépôt remplace le précédent du même type ; les heures pointées ne sont jamais touchées.</p>
       <input type="file" id="fichiers" accept=".xlsx" multiple>
       <div id="resultats" style="margin-top:12px"></div>
+    </div>
+    <div class="carte">
+      <p><strong>InterFast</strong> : relit tous les chantiers (CH, client, statut). Lecture seule —
+        rien n'est écrit dans InterFast. Un chantier « Terminé » n'est plus proposé sur les tablettes.</p>
+      <button id="synchro">Relire les chantiers InterFast</button>
+      <div id="synchro-res" style="margin-top:12px"></div>
     </div>`;
+  $('#synchro').onclick = async () => {
+    const sortie = $('#synchro-res');
+    sortie.textContent = 'Lecture en cours (une vingtaine de pages)…';
+    try {
+      const r = await api('/api/interfast/chantiers', {method: 'POST'});
+      sortie.innerHTML = `<span class="pastille p-vert">✓</span> ${esc(r.chantiers)} chantiers lus.` +
+        (r.absents_d_interfast.length ? ` <span class="pastille p-ambre">CH inconnus d'InterFast :
+          ${esc(r.absents_d_interfast.join(', '))}</span>` : ' Tous les CH de RHI existent dans InterFast.');
+    } catch (err) {
+      sortie.innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(err.message)}`;
+    }
+  };
   $('#fichiers').onchange = async (e) => {
     const sortie = $('#resultats'); sortie.innerHTML = '';
     for (const f of e.target.files) {

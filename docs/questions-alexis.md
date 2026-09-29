@@ -49,10 +49,13 @@ questions. Une ligne par réponse suffit.
    devis (InterFast) ? Et quel taux horaire pour passer des heures aux euros ?
 
 ### InterFast
-10. **Dans InterFast, où doivent tomber les heures ?** Si tu peux nous montrer
-    (capture d'écran) une ligne d'heures saisie à la main sur une affaire,
-    on saura quel outil appeler. Tant qu'on ne l'a pas vu fonctionner sur une
-    affaire de test, rien n'est écrit dans InterFast : les heures restent
-    dans RHI et s'exportent en Excel.
+10. **Le coût horaire des gars.** Dans InterFast, les techniciens de la
+    serrurerie ont un coût horaire à 0 € : sans lui, aucune rentabilité ne
+    se calcule, ni dans InterFast ni dans RHI. Qui peut le renseigner (coût
+    chargé par personne, ou un taux moyen atelier / pose) ?
+    Et pour faire tomber les heures dans InterFast : son API ne permet pas
+    d'écrire des heures directement. Le chemin envisagé (une intervention
+    par personne, par chantier et par jour, avec la durée réelle) est décrit
+    dans `docs/interfast.md` ; on l'essaiera d'abord sur une affaire de test.
 
 Merci !

@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS affaires (
   conduc TEXT NOT NULL DEFAULT '',
   heures_prevues REAL,             -- somme du plan de charge atelier
   source TEXT NOT NULL,            -- 'planning' | 'interfast' | 'tablette'
-  maj TEXT
+  maj TEXT,
+  client TEXT NOT NULL DEFAULT '', -- les quatre suivants viennent d'InterFast
+  titre TEXT NOT NULL DEFAULT '',
+  statut TEXT NOT NULL DEFAULT '', -- 'En cours' | 'Non démarré' | 'Terminé'
+  interfast_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS lignes_prevues (
   ch TEXT NOT NULL,
@@ -91,6 +95,12 @@ def connexion(chemin=None) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
+    # Une base créée avant l'arrivée d'InterFast n'a pas ces colonnes.
+    presentes = {r[1] for r in db.execute("PRAGMA table_info(affaires)")}
+    for col, decl in (("client", "TEXT NOT NULL DEFAULT ''"), ("titre", "TEXT NOT NULL DEFAULT ''"),
+                      ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER")):
+        if col not in presentes:
+            db.execute(f"ALTER TABLE affaires ADD COLUMN {col} {decl}")
     return db
 
 
@@ -163,6 +173,29 @@ def importer(db, donnees: dict) -> dict:
             "affectations": len(donnees["affectations"])}
 
 
+def importer_chantiers(db, chantiers: list) -> dict:
+    """Range les chantiers lus dans InterFast (interfast.chantiers()).
+
+    InterFast fait foi pour le client, le titre et le statut. Le nom court
+    du planning (« LES PINS ») est gardé s'il existe : c'est celui que les
+    gars reconnaissent sur la tablette ; sinon on prend le titre InterFast."""
+    now = _iso(maintenant())
+    with db:
+        for c in chantiers:
+            db.execute("""INSERT INTO affaires(ch, chantier, source, maj, client, titre, statut, interfast_id)
+                          VALUES (?,?, 'interfast', ?,?,?,?,?)
+                          ON CONFLICT(ch) DO UPDATE SET client=excluded.client, titre=excluded.titre,
+                            statut=excluded.statut, interfast_id=excluded.interfast_id, maj=excluded.maj,
+                            chantier=CASE WHEN affaires.chantier = '' THEN excluded.chantier
+                                          ELSE affaires.chantier END,
+                            source=CASE WHEN affaires.source = 'tablette' THEN 'interfast'
+                                        ELSE affaires.source END""",
+                       (c["ch"], c["titre"], now, c["client"], c["titre"], c["statut"], c["id"]))
+    inconnus = [r["ch"] for r in db.execute(
+        "SELECT ch FROM affaires WHERE interfast_id IS NULL ORDER BY ch")]
+    return {"chantiers": len(chantiers), "absents_d_interfast": inconnus}
+
+
 # ═══════════════════════ CE QU'ON PROPOSE SUR LA TABLETTE ═══════════════════════
 
 def personnes(db, equipe=None) -> list:
@@ -193,8 +226,11 @@ def menu(db, personne: str, jour: dt.date) -> dict:
                FROM planning p LEFT JOIN affaires a ON a.ch = p.ch
                WHERE p.personne=? AND p.jour BETWEEN ? AND ? AND p.ch IS NOT NULL""",
             (personne, lundi.isoformat(), (lundi + dt.timedelta(days=4)).isoformat()))]
+    # Un chantier terminé dans InterFast ne se propose plus, sauf s'il est
+    # encore au planning du jour (le planning a le dernier mot sur le terrain).
     toutes = [dict(r) for r in db.execute(
-        "SELECT ch, chantier FROM affaires ORDER BY chantier, ch")]
+        """SELECT ch, chantier, client, titre FROM affaires
+           WHERE statut != 'Terminé' ORDER BY chantier, ch""")]
     return {"planning": [p for p in du_jour if p["ch"]],
             "taches_sans_ch": [p["libelle"] for p in du_jour if not p["ch"]],
             "affaires": toutes,

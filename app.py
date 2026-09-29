@@ -237,9 +237,20 @@ def api_personne(nom: str, p: Personne, c=Depends(db)):
 @app.get("/api/interfast/outils", dependencies=[Depends(acces_bureau)])
 async def api_interfast_outils():
     try:
-        return {"ecriture": interfast.ECRITURE, "outils": await interfast.outils()}
+        return {"ecriture": interfast.ECRITURE,
+                "outils": await interfast.outils(getattr(app.state, "transport_interfast", None))}
     except interfast.InterFastIndisponible as e:
         raise HTTPException(503, str(e))
+
+
+@app.post("/api/interfast/chantiers", dependencies=[Depends(acces_bureau)])
+async def api_interfast_chantiers(c=Depends(db)):
+    """Relit tous les chantiers d'InterFast (lecture seule) : CH, client, statut."""
+    try:
+        liste = await interfast.chantiers(getattr(app.state, "transport_interfast", None))
+    except interfast.InterFastIndisponible as e:
+        raise HTTPException(503, str(e))
+    return base.importer_chantiers(c, liste)
 
 
 # ═══════════════════════ PAGES ═══════════════════════

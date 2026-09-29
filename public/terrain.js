@@ -122,7 +122,7 @@ function dessiner() {
   const actuel = etat.enCours[0];
   const f = etat.filtre.trim().toUpperCase();
   const autres = f.length < 2 ? [] : m.affaires.filter((a) =>
-    (a.ch + ' ' + a.chantier).toUpperCase().includes(f)).slice(0, 12);
+    (a.ch + ' ' + a.chantier + ' ' + (a.client || '') + ' ' + (a.titre || '')).toUpperCase().includes(f)).slice(0, 12);
   const chSaisi = /^CH\s*\d{5}$/.test(f) && !autres.some((a) => a.ch === f.replace(/\s/g, ''));
   $('#ecran').innerHTML = `
     ${actuel ? `
@@ -145,7 +145,8 @@ function dessiner() {
     <input id="cherche" placeholder="Nom du chantier ou CH (ex. LES CIGALES, CH00906)" value="${esc(etat.filtre)}" autocomplete="off">
     <div class="grille" style="margin-top:12px">
       ${autres.map((a) => `<button class="gros chantier" data-ch="${esc(a.ch)}" data-libelle="">
-        <span class="ch">${esc(a.ch)}</span><br>${esc(a.chantier || '—')}</button>`).join('')}
+        <span class="ch">${esc(a.ch)}</span><br>${esc(a.chantier || '—')}
+        <small>${esc(a.client || '')}</small></button>`).join('')}
       ${chSaisi ? `<button class="gros chantier" data-ch="${esc(f.replace(/\s/g, ''))}" data-libelle="">
         <span class="ch">${esc(f)}</span><br>Pointer sur ce CH<small>Absent des plannings : le bureau vérifiera</small></button>` : ''}
     </div>

@@ -15,12 +15,13 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 - Sauvegarde nocturne de la base.
 
 ## V1.2 — InterFast
-1. `GET /api/interfast/outils` avec la vraie clé : trouver l'outil qui
-   liste les affaires et celui qui pose des heures sur un CH.
-2. Liste des CH lue dans InterFast (plus seulement dans les plannings).
-3. Envoi des heures validées au bureau, sur une affaire de test d'abord,
-   puis `ECRITURE = True`. Chaque pointage garde la référence InterFast
-   créée (colonne `interfast`) : jamais deux envois.
+1. ~~Trouver les outils avec la vraie clé~~ — fait le 29/09/2026, voir
+   `docs/interfast.md`.
+2. ~~Liste des CH lue dans InterFast~~ — fait (lecture seule).
+3. Décider le chemin des heures (A, B ou C dans `docs/interfast.md`), puis
+   l'essayer sur une affaire de test avant `ECRITURE = True`.
+4. Relier chaque personne de RHI à son utilisateur InterFast (id).
+5. Montant vendu par CH (devis signés) et coût horaire : la rentabilité.
 
 ## V2 — menuiserie (Alfa)
 Les plannings MEN n'ont pas la même forme (onglet par année côté pose, pas

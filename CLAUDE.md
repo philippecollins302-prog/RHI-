@@ -45,15 +45,18 @@ est faite.
 - **Le CH est la seule clé fiable.** Les noms de chantier varient d'un
   fichier à l'autre (LES CIGALES/LES CIGLAES, ABCD/ACBD).
 
-## InterFast — ce qui reste à apprendre
-InterFast est la base de tout : les CH en viennent, les heures doivent y
-retomber (« comme si j'étais allé sur le terrain » — une ligne
-d'intervention : garde-corps, tel ouvrier, 45 minutes). Mais on ne connaît
-pas encore **l'outil MCP qui liste les affaires** ni **celui qui pose des
-heures sur un CH** : ceux d'Ali Baba visent un client, pas une affaire.
-Premier geste avec la clé : `GET /api/interfast/outils` (bureau). Clé
-`INTERFAST_VIP` dans l'environnement **uniquement** — ce dépôt est PUBLIC.
-Depuis le dev : aucune écriture réelle.
+## InterFast — voir docs/interfast.md
+- Les CH sont les **chantiers** InterFast (`rechercher_chantiers`, « Réf:
+  CH00xxx ») : RHI les relit, en lecture seule (`POST /api/interfast/chantiers`,
+  bouton au bureau). Les 36 CH des plannings y étaient tous (29/09/2026).
+- L'API **n'écrit pas d'heures** : les timesheets ne se lisent qu'attachées à
+  une intervention. `ECRITURE = False` tant que le chemin (A, B ou C dans
+  docs/interfast.md) n'est pas décidé et essayé sur une affaire de test.
+- Coût horaire des techniciens à 0 dans InterFast : aucune rentabilité
+  possible là-bas tant qu'il n'est pas renseigné.
+- Clé `INTERFAST_VIP` dans l'environnement **uniquement** — ce dépôt est
+  PUBLIC. Depuis le dev : aucune écriture réelle. Les bancs utilisent un faux
+  serveur (`httpx.MockTransport`, `app.state.transport_interfast`).
 
 ## Données
 - **Aucun vrai planning, aucun nom réel dans le dépôt** (il est public).
