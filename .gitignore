@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+donnees/
+*.db
+*.db-*
+# Les vrais plannings ne vont jamais dans ce dépôt public.
+*.xlsx
+*.xls
