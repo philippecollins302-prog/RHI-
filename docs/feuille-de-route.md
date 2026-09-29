@@ -8,11 +8,13 @@ personne, export Excel, corrections au bureau, point d'affaire réel face au
 prévu du plan de charge, import des plannings ATE et POSE SER.
 
 ## V1.1 — mise en service
-- Déploiement Clever Cloud (même rituel qu'Ali Baba : branche `prod`,
-  bucket monté sur `/donnees`, `CC_RUN_COMMAND="uvicorn app:app --host
-  0.0.0.0 --port 9000"`), codes `RHI_CODE_TERRAIN` / `RHI_CODE_BUREAU`.
-- Réponses d'Alexis (`docs/questions-alexis.md`) intégrées.
-- Sauvegarde nocturne de la base.
+- Procédure écrite : `docs/deploiement.md` (application GROUP ALMA, FS
+  Bucket, variables, vérification par `/api/sante`). Reste les gestes dans la
+  console Clever Cloud, et le « pousse » de Philippe pour la branche `prod`.
+- ~~Sauvegarde~~ — faite : une copie par jour gardée 30 jours, et le
+  téléchargement de la base au bureau.
+- ~~Journal SQLite compatible avec le bucket réseau~~ — `delete`, pas `wal`.
+- Réponses d'Alexis (`docs/questions-alexis.md`) à intégrer.
 
 ## V1.2 — InterFast
 1. ~~Trouver les outils avec la vraie clé~~ — fait le 29/09/2026, voir

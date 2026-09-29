@@ -96,6 +96,13 @@ banc ; un bug corrigé = le banc qui l'aurait attrapé. `banc-pointage.py`
 joue une semaine entière à travers l'API avec une horloge truquée
 (`app.state.horloge`).
 
+## Déploiement — voir docs/deploiement.md
+Clever Cloud, organisation GROUP ALMA, FS Bucket monté sur `donnees/`,
+**une seule instance**, SQLite en journal **`delete`** (le WAL ne marche pas
+sur le bucket réseau). La branche `prod` déclenche le déploiement : on ne la
+pousse **que quand Philippe dit « pousse »**. Après chaque déploiement, lire
+`/api/sante` : un `git push` réussi ne prouve rien.
+
 ## Accès
 `RHI_CODE_TERRAIN` (tablettes, téléphones) et `RHI_CODE_BUREAU` dans
 l'environnement. Absents = ouvert (poste de dev uniquement). Le code est

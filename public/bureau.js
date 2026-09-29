@@ -198,9 +198,22 @@ async function ongletPlannings() {
       <button id="synchro">Relire les chantiers InterFast</button>
       <button id="montants">Relire les montants vendus</button>
       <div id="synchro-res" style="margin-top:12px"></div>
+      <p><a class="btn" href="/api/sauvegarde" id="sauvegarde">⬇ Télécharger toute la base (sauvegarde)</a>
+        <span class="doux">Une copie est faite chaque jour sur le serveur ; celle-ci est à garder ailleurs.</span></p>
       <p class="doux">Vendu HT = devis <em>signés</em> ou <em>payés</em> dont le titre porte le CH (« Import Optima -
         CH00…»). Un devis sans CH dans son titre n'est pas compté : RHI affiche « — » plutôt que 0 €.</p>
     </div>`;
+  $('#sauvegarde').onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await fetch('/api/sauvegarde', {headers: {'X-RHI-Code': lire('rhi.code', '')}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(await r.blob());
+      a.download = 'rhi-' + isoParis(Date.now()).slice(0, 16).replace(':', 'h') + '.db';
+      a.click();
+    } catch (err) { dire('Sauvegarde : ' + err.message); }
+  };
   $('#montants').onclick = async () => {
     const sortie = $('#synchro-res');
     sortie.textContent = 'Lecture des devis, un CH à la fois…';

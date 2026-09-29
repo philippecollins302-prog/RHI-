@@ -16,8 +16,11 @@ import tempfile
 import time
 from pathlib import Path
 
+import asyncio
+import contextlib
+
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -25,7 +28,33 @@ from rhi import base, interfast, lecture
 
 PUBLIC = Path(__file__).parent / "public"
 
-app = FastAPI(title="RHI")
+def sauvegarde_du_jour():
+    c = base.connexion(getattr(app.state, "chemin_base", None))
+    try:
+        dossier = Path(getattr(app.state, "chemin_base", None) or base.chemin_base()).parent / "sauvegardes"
+        return base.sauvegarder(c, dossier, maintenant().date())
+    finally:
+        c.close()
+
+
+async def veilleur():
+    """Toutes les heures : la sauvegarde du jour, si elle n'est pas faite."""
+    while True:
+        try:
+            await asyncio.to_thread(sauvegarde_du_jour)
+        except Exception as e:  # une sauvegarde ratée ne doit pas tuer l'appli
+            print("sauvegarde ratée :", e)
+        await asyncio.sleep(3600)
+
+
+@contextlib.asynccontextmanager
+async def vie(_app):
+    tache = asyncio.create_task(veilleur())
+    yield
+    tache.cancel()
+
+
+app = FastAPI(title="RHI", lifespan=vie)
 # L'horloge est remplaçable : les bancs jouent une semaine entière en une seconde.
 app.state.horloge = base.maintenant
 
@@ -106,8 +135,16 @@ def _quand(texte: str | None) -> dt.datetime:
 
 
 @app.get("/api/sante")
-def sante():
-    return {"ok": True, "heure": maintenant().isoformat(), "interfast_ecriture": interfast.ECRITURE}
+def sante(c=Depends(db)):
+    """Ce qu'on vérifie après chaque déploiement (docs/deploiement.md) : la
+    base doit être dans donnees/ (le bucket), en journal « delete »."""
+    chemin = Path(getattr(app.state, "chemin_base", None) or base.chemin_base()).resolve()
+    return {"ok": True, "heure": maintenant().isoformat(), "interfast_ecriture": interfast.ECRITURE,
+            "base": {"dans_donnees": "donnees" in chemin.parts or bool(os.getenv("RHI_DONNEES")),
+                     "journal": c.execute("PRAGMA journal_mode").fetchone()[0],
+                     "inscriptible": os.access(chemin.parent, os.W_OK)},
+            "cle_interfast": bool(interfast.cle()),
+            "codes_acces": bool(os.getenv("RHI_CODE_TERRAIN")) and bool(os.getenv("RHI_CODE_BUREAU"))}
 
 
 @app.get("/api/personnes", dependencies=[Depends(acces_terrain)])
@@ -293,6 +330,14 @@ def api_personne(nom: str, p: Personne, c=Depends(db)):
             c.execute("UPDATE personnes SET cout_horaire=? WHERE nom=?",
                       (p.cout_horaire or None, nom.upper()))
     return {"ok": True}
+
+
+@app.get("/api/sauvegarde", dependencies=[Depends(acces_bureau)])
+def api_sauvegarde(c=Depends(db)):
+    """La base entière, à garder ailleurs que sur le serveur."""
+    nom = f"rhi-{maintenant().strftime('%Y-%m-%d-%Hh%M')}.db"
+    return Response(base.copie_complete(c), media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{nom}"'})
 
 
 @app.get("/api/interfast/outils", dependencies=[Depends(acces_bureau)])

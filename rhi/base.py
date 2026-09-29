@@ -112,7 +112,10 @@ def connexion(chemin=None) -> sqlite3.Connection:
     # FastAPI sert les routes async et sync sur des fils différents.
     db = sqlite3.connect(chemin or chemin_base(), check_same_thread=False)
     db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
+    # PAS de WAL : sur Clever Cloud la base vit sur un FS Bucket (disque
+    # réseau), où le mode WAL ne fonctionne pas — leçon d'Ali Baba, qui
+    # tourne en « delete » sur le même hébergement. Vérifiable : /api/sante.
+    db.execute("PRAGMA journal_mode=DELETE")
     db.executescript(SCHEMA)
     # Une base plus ancienne que ces colonnes les reçoit ici : on ne perd
     # jamais une base de production pour une colonne ajoutée. Une fois par
@@ -724,3 +727,51 @@ def affaires_pointees(db, a: dt.datetime) -> list:
                        "heures_prevues": r["heures_prevues"],
                        "consomme_pct": round(100 * h / r["heures_prevues"]) if r["heures_prevues"] else None})
     return sorted(sortie, key=lambda x: -(x["consomme_pct"] or 0) if x["heures_prevues"] else -x["heures_reelles"])
+
+
+# ═══════════════════════ SAUVEGARDE ═══════════════════════
+
+GARDER_JOURS = 30
+
+
+def sauvegarder(db, dossier: Path, jour: dt.date) -> Path | None:
+    """Une copie cohérente de la base par jour, gardée 30 jours.
+
+    L'API de sauvegarde de SQLite copie une base en cours d'écriture sans la
+    bloquer ni la corrompre (un simple cp pendant une écriture le pourrait).
+    Rien si la copie du jour existe déjà. Sur Clever Cloud, le dossier est
+    sur le bucket : cela protège d'une erreur (import raté, correction de
+    masse), pas de la perte du bucket — d'où aussi le téléchargement au
+    bureau (docs/deploiement.md)."""
+    dossier.mkdir(parents=True, exist_ok=True)
+    cible = dossier / f"rhi-{jour.isoformat()}.db"
+    if cible.exists():
+        return None
+    provisoire = cible.with_suffix(".tmp")
+    copie = sqlite3.connect(provisoire)
+    try:
+        db.backup(copie)
+    finally:
+        copie.close()
+    provisoire.rename(cible)
+    limite = jour - dt.timedelta(days=GARDER_JOURS)
+    for vieux in dossier.glob("rhi-*.db"):
+        try:
+            if dt.date.fromisoformat(vieux.stem[4:]) < limite:
+                vieux.unlink()
+        except ValueError:
+            pass
+    return cible
+
+
+def copie_complete(db) -> bytes:
+    """La base entière, cohérente, pour un téléchargement au bureau."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "rhi.db"
+        copie = sqlite3.connect(f)
+        try:
+            db.backup(copie)
+        finally:
+            copie.close()
+        return f.read_bytes()
