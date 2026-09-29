@@ -43,7 +43,8 @@ async function afficher() {
   $('#vue').innerHTML = '<p class="doux">Chargement…</p>';
   try {
     await ({rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
-            direct: ongletDirect, plannings: ongletPlannings}[vue.onglet] || ongletRhi)();
+            direct: ongletDirect, plannings: ongletPlannings,
+            personnes: ongletPersonnes}[vue.onglet] || ongletRhi)();
   } catch (e) {
     $('#vue').innerHTML = `<div class="rien">Erreur : ${esc(e.message)}</div>`;
   }
@@ -61,6 +62,10 @@ async function ongletRhi() {
       <strong style="font-size:20px">${esc(r.personne)}</strong>
       <span class="doux"> · ${heures(r.total)} dont ${heures(r.hors_affaire) || '0h'} hors affaire</span>
       ${r.a_verifier ? `<span class="pastille p-ambre">${r.a_verifier} à vérifier</span>` : ''}
+      ${r.validee
+        ? `<span class="pastille p-vert">✓ validé par ${esc(r.validee.par)} le ${esc(r.validee.le.slice(0, 10))}</span>
+           <button data-devalider="${esc(r.personne)}">Dévalider</button>`
+        : `<button data-valider="${esc(r.personne)}">Valider la semaine</button>`}
       <div class="defile"><table>
         <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
         ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || '—')}</td><td>${esc(l.libelle)}</td>
@@ -70,6 +75,24 @@ async function ongletRhi() {
     </div>`).join('') +
     (vides.length ? `<p class="doux">Rien pointé cette semaine : ${esc(vides.join(', '))}</p>` : '');
   brancherSemaine();
+  document.querySelectorAll('[data-valider]').forEach((b) => b.onclick = async () => {
+    const qui = lire('rhi.qui', '') || prompt('Votre nom (il signe la validation) :') || '';
+    if (!qui.trim()) return;
+    ecrire('rhi.qui', qui.trim());
+    try {
+      await api('/api/validations', {method: 'POST',
+        json: {personne: b.dataset.valider, semaine: vue.semaine, qui: qui.trim()}});
+      afficher();
+    } catch (e) { dire(e.message); }
+  });
+  document.querySelectorAll('[data-devalider]').forEach((b) => b.onclick = async () => {
+    if (!confirm('Dévalider ? La semaine redevient corrigeable.')) return;
+    try {
+      await api('/api/validations?personne=' + encodeURIComponent(b.dataset.devalider) + '&semaine=' + vue.semaine,
+        {method: 'DELETE'});
+      afficher();
+    } catch (e) { dire(e.message); }
+  });
 }
 
 // ── À vérifier : les pointages douteux, corrigeables sur place ──
@@ -111,14 +134,15 @@ async function ongletAffaires() {
     <p class="doux">Heures réelles pointées face aux heures prévues du plan de charge atelier
       (fabrication seulement : la pose n'a pas de prévu chiffré dans les plannings).</p>
     <div class="defile"><table>
-      <tr><th>CH</th><th>Chantier</th><th>Conduc.</th><th class="n">Réel</th><th class="n">Prévu fab</th><th class="n">Consommé</th></tr>
+      <tr><th>CH</th><th>Chantier</th><th>Client</th><th>Conduc.</th><th class="n">Réel</th><th class="n">Prévu fab</th><th class="n">Consommé</th><th class="n">Coût MO</th></tr>
       ${liste.map((a) => {
         const p = a.consomme_pct;
         const cl = p === null ? '' : p > 100 ? 'p-rouge' : p > 80 ? 'p-ambre' : 'p-vert';
         return `<tr><td><a href="#" data-ch="${esc(a.ch)}" class="ch">${esc(a.ch)}</a></td><td>${esc(a.chantier)}</td>
-          <td>${esc(a.conduc)}</td><td class="n">${heures(a.heures_reelles) || '—'}</td>
+          <td class="doux">${esc(a.client || '')}</td><td>${esc(a.conduc)}</td><td class="n">${heures(a.heures_reelles) || '—'}</td>
           <td class="n">${a.heures_prevues ? heures(a.heures_prevues) : '—'}</td>
-          <td class="n">${p === null ? '' : `<span class="pastille ${cl}">${p} %</span>`}</td></tr>`;
+          <td class="n">${p === null ? '' : `<span class="pastille ${cl}">${esc(p)} %</span>`}</td>
+          <td class="n">${a.cout_main_oeuvre ? euros(a.cout_main_oeuvre) : ''}</td></tr>`;
       }).join('')}
     </table></div><div id="detail"></div>`;
   document.querySelectorAll('[data-ch]').forEach((a) => a.onclick = async (e) => {
@@ -127,6 +151,8 @@ async function ongletAffaires() {
     $('#detail').innerHTML = `<div class="carte" style="margin-top:16px">
       <div class="ch">${esc(d.ch)}</div><strong style="font-size:20px">${esc(d.chantier)}</strong>
       <p>${heures(d.heures_reelles) || '0h'} pointées${d.heures_prevues ? ' sur ' + heures(d.heures_prevues) + ' prévues' : ''}.
+        ${d.cout_main_oeuvre ? `<br>Coût main-d'œuvre : <strong>${euros(d.cout_main_oeuvre)}</strong>` : ''}
+        ${d.sans_cout.length ? `<br><span class="pastille p-ambre">Sans coût horaire (non chiffrés) : ${esc(d.sans_cout.join(', '))}</span>` : ''}
         ${d.heures_en_suspens ? `<span class="pastille p-ambre">${heures(d.heures_en_suspens)} en suspens : arrêt oublié à corriger (onglet À vérifier)</span>` : ''}</p>
       <div class="ligne" style="align-items:flex-start">
         <table><tr><th>Qui</th><th class="n">Heures</th></tr>${Object.entries(d.par_personne).map(([k, v]) =>
@@ -192,6 +218,61 @@ async function ongletPlannings() {
         sortie.innerHTML += `<p><span class="pastille p-rouge">✗</span> ${esc(f.name)} : ${esc(err.message)}</p>`;
       }
     }
+  };
+}
+
+function euros(v) {
+  return esc(Number(v).toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: 0}));
+}
+
+// ── Personnes : équipe, actif, compte InterFast, coût horaire ──
+async function ongletPersonnes() {
+  const [d, comptes] = await Promise.all([api('/api/personnes/detail'), api('/api/interfast/utilisateurs')]);
+  const options = (choisi) => `<option value="">— aucun —</option>` + comptes.map((u) =>
+    `<option value="${esc(u.id)}" ${u.id === choisi ? 'selected' : ''}>${esc(u.prenom)} ${esc(u.nom)}${u.archive ? ' (archivé)' : ''}</option>`).join('');
+  $('#vue').innerHTML = `
+    <div class="carte">
+      <p>Le coût horaire chiffre le point d'affaire. Priorité : celui saisi ici, sinon celui d'InterFast
+        (s'il n'est pas à 0), sinon le taux moyen ${d.cout_defaut ? `(<strong>${euros(d.cout_defaut)}</strong>/h)` : '(non réglé : variable RHI_COUT_HORAIRE)'}.</p>
+      <button id="relire">Relire les comptes InterFast</button> <span class="doux">(une minute : InterFast est lu un compte à la fois)</span>
+      <div id="rapport" style="margin-top:12px"></div>
+    </div>
+    <div class="defile"><table>
+      <tr><th>Nom (planning)</th><th>Équipe</th><th>Actif</th><th>Compte InterFast</th><th class="n">Coût saisi €/h</th><th class="n">Retenu</th></tr>
+      ${d.personnes.map((p) => `<tr data-nom="${esc(p.nom)}">
+        <td><strong>${esc(p.nom)}</strong><br><span class="doux">${esc(p.nom_complet)}</span></td>
+        <td><select data-champ="equipe"><option ${p.equipe === 'atelier' ? 'selected' : ''}>atelier</option>
+          <option ${p.equipe === 'pose' ? 'selected' : ''}>pose</option></select></td>
+        <td><input type="checkbox" data-champ="actif" ${p.actif ? 'checked' : ''} style="width:auto"></td>
+        <td><select data-champ="compte">${options(p.interfast_user_id)}</select></td>
+        <td class="n"><input type="number" min="0" step="0.5" data-champ="cout" value="${esc(p.cout_horaire ?? '')}" style="width:100px"></td>
+        <td class="n">${p.cout_retenu ? euros(p.cout_retenu) : '<span class="pastille p-ambre">aucun</span>'}</td>
+      </tr>`).join('')}
+    </table></div>`;
+  document.querySelectorAll('tr[data-nom] [data-champ]').forEach((champ) => champ.onchange = async () => {
+    const nom = champ.closest('tr').dataset.nom;
+    const corps = {
+      equipe: {equipe: champ.value},
+      actif: {actif: champ.checked ? 1 : 0},
+      compte: champ.value ? {interfast_user_id: Number(champ.value)} : {delier: true},
+      cout: {cout_horaire: Number(champ.value || 0)},
+    }[champ.dataset.champ];
+    try { await api('/api/personnes/' + encodeURIComponent(nom), {method: 'PATCH', json: corps}); dire('Enregistré'); afficher(); }
+    catch (e) { dire(e.message); }
+  });
+  $('#relire').onclick = async () => {
+    const r0 = $('#rapport'); r0.textContent = 'Lecture des comptes InterFast…';
+    try {
+      const r = await api('/api/interfast/utilisateurs', {method: 'POST'});
+      const liste = (titre, cl, v) => v.length ? `<p><span class="pastille ${cl}">${esc(titre)}</span> ${esc(v.join(', '))}</p>` : '';
+      r0.innerHTML = liste('Reliés', 'p-vert', r.liees) + liste('Déjà reliés', 'p-vert', r.deja_liees) +
+        liste('Plusieurs comptes possibles — choisir ci-dessous', 'p-ambre',
+          Object.entries(r.ambigus).map(([k, v]) => k + ' (' + v.join(' / ') + ')')) +
+        liste('Compte archivé dans InterFast', 'p-ambre',
+          Object.entries(r.archives).map(([k, v]) => k + ' (' + v.join(' / ') + ')')) +
+        liste('Aucun compte InterFast', 'p-rouge', r.sans_correspondance);
+      setTimeout(afficher, 4000);
+    } catch (e) { r0.innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(e.message)}`; }
   };
 }
 

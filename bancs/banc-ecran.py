@@ -19,10 +19,25 @@ for js in ("terrain.js", "bureau.js"):
     # les nombres et les fragments déjà construits (listes .map().join()).
     for m in re.finditer(r"\$\{([^{}]+)\}", code):
         expr = m.group(1).strip()
-        sure = (expr.startswith(("esc(", "heures(", "duree(")) or "?" in expr or ".map(" in expr
+        sure = (expr.startswith(("esc(", "heures(", "duree(", "euros(", "options(")) or "?" in expr or ".map(" in expr
                 or re.fullmatch(r"[\w.]+\.(length|id|total|a_verifier|personnes|affectations)", expr)
                 or re.fullmatch(r"p\.id|p|cl|j|RETOUR_MS|chemin|vue\.semaine", expr)  # vue.semaine : une date AAAA-MM-JJ
                 or expr in ("choixSemaine()", "vides.length ? '' : ''"))
         verif(sure, f"{js} : « ${{{expr}}} » injecté sans esc()")
+
+# euros() est déclarée sûre ci-dessus : elle doit vraiment échapper.
+bureau = (PUB / "bureau.js").read_text()
+verif("return esc(Number(v).toLocaleString" in bureau, "euros() passe par esc()")
+verif("`<option value=\"${esc(u.id)}\"" in bureau and "${esc(u.prenom)} ${esc(u.nom)}" in bureau,
+      "options() échappe chaque compte InterFast")
+
+# Chaque onglet appelé par afficher() doit être déclaré AU NIVEAU DU FICHIER :
+# le 29/09/2026, ongletPersonnes s'était glissé dans un gestionnaire de clic
+# et l'onglet RHI plantait (« ongletPersonnes is not defined »).
+carte = re.search(r"\(\{(rhi: .*?)\}\[vue\.onglet\]", bureau, re.S).group(1)
+for fonction in re.findall(r":\s*(\w+)", carte):
+    verif(re.search(rf"^async function {fonction}\(", bureau, re.M),
+          f"bureau.js : {fonction} doit être déclarée au niveau du fichier")
+verif(bureau.rstrip().endswith("afficher();"), "bureau.js se termine par l'appel de démarrage")
 
 fin("banc-ecran")

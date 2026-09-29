@@ -20,6 +20,7 @@ ECRITURE reste donc à False tant que la façon de faire tomber les heures
 n'est pas décidée (voir docs/interfast.md). Une écriture ratée dans
 InterFast fausse un point d'affaire en silence ; un export, lui, se relit.
 """
+import asyncio
 import json
 import os
 import re
@@ -46,10 +47,17 @@ async def _appel(methode: str, params: dict, transport=None) -> dict:
     if not k:
         raise InterFastIndisponible("Clé INTERFAST_VIP absente de l'environnement")
     corps = {"jsonrpc": "2.0", "id": 1, "method": methode, "params": params}
-    async with httpx.AsyncClient(timeout=40, transport=transport) as h:
-        r = await h.post(f"{MCP_URL}?apiKey={k}", json=corps, headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream"})
+    # InterFast répond parfois 401 ou 429 sous une rafale d'appels, puis
+    # accepte la même requête une seconde plus tard (constaté le 29/09/2026
+    # en lisant les utilisateurs un par un). Trois essais, espacés.
+    for essai in range(3):
+        async with httpx.AsyncClient(timeout=40, transport=transport) as h:
+            r = await h.post(f"{MCP_URL}?apiKey={k}", json=corps, headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream"})
+        if r.status_code not in (401, 429, 502, 503) or essai == 2:
+            break
+        await asyncio.sleep(1 + 2 * essai)
     for ligne in r.text.splitlines():
         if ligne.startswith("data: "):
             d = json.loads(ligne[6:])
@@ -107,6 +115,89 @@ async def chantiers(transport=None, plafond=100) -> list:
         tous += lus
         page += 1
     return tous
+
+
+class Tronque(InterFastIndisponible):
+    """Le MCP coupe ses réponses vers 4 000 caractères (« … (tronqué) »)."""
+
+
+def _json_de(texte: str):
+    """Le bloc JSON d'une réponse d'appeler_api (« 📥 **GET …** ```json {…} ``` »)."""
+    if "(tronqué)" in texte:
+        raise Tronque("Réponse InterFast tronquée")
+    debut, fin = texte.find("{"), texte.rfind("}")
+    if debut < 0 or fin < debut:
+        raise InterFastIndisponible(f"Réponse sans JSON : {texte[:120]}")
+    return json.loads(texte[debut:fin + 1])
+
+
+async def lire_api(chemin: str, params: dict, transport=None):
+    """GET générique par appeler_api. GET SEULEMENT : c'est une garde, pas
+    une convention — un POST passerait par une confirmation d'écriture."""
+    texte = await outil("appeler_api", {"methode": "GET", "chemin": chemin, "params": params,
+                                        "intention": f"Lecture {chemin} (RHI)"}, transport)
+    return _json_de(texte)
+
+
+def _fiche_utilisateur(u: dict) -> dict:
+    return {"id": u.get("id"), "prenom": u.get("firstName") or "", "nom": u.get("lastName") or "",
+            "role": u.get("role") or "", "archive": bool(u.get("archived")),
+            "cout": u.get("hourlyCost") or 0}
+
+
+async def utilisateur(uid: int, transport=None):
+    """Un utilisateur par son id, ou None s'il n'existe pas (404)."""
+    texte = await outil("appeler_api", {"methode": "GET", "chemin": f"/v1/users/{uid}",
+                                        "intention": "Lecture utilisateur (RHI)"}, transport)
+    if "erreur 404" in texte[:80] or "n'existe pas" in texte[:200]:
+        return None
+    u = _fiche_utilisateur(_json_de(texte))
+    if u["id"] != uid:
+        raise InterFastIndisponible(f"Réponse pour l'id {u['id']} alors qu'on demandait {uid}")
+    return u
+
+
+async def utilisateurs(transport=None, trou=12, plafond=300) -> list:
+    """Tous les utilisateurs du compte.
+
+    Pourquoi ce détour (constaté le 29/09/2026) : le MCP coupe toute réponse
+    vers 4 000 caractères — la liste /v1/users s'arrête au 7e utilisateur —
+    et `appeler_api` ne transmet ni `page` ni `size` ni `name`. Un
+    utilisateur seul, lui, tient en 735 caractères. On part donc des ids
+    visibles dans la liste tronquée, et on lit les ids voisins un par un,
+    dans les deux sens, jusqu'à `trou` absents d'affilée (les comptes d'une
+    entreprise sont créés par lots : ids contigus, avec des trous).
+
+    EN SÉRIE, jamais en parallèle : sous une rafale, le MCP a rendu des
+    404 pour des comptes qui existent (Cédric, Djellal) — des gars
+    silencieusement absents du RHI. Une trentaine de secondes, au bureau,
+    une fois de temps en temps : c'est le bon prix."""
+    texte = await outil("appeler_api", {"methode": "GET", "chemin": "/v1/users",
+                                        "params": {"page": 0, "size": 100},
+                                        "intention": "Lecture utilisateurs (RHI)"}, transport)
+    graines = sorted({int(i) for i in re.findall(r'"id":\s*(\d+),\s*"firstName"', texte)})
+    if not graines:
+        raise InterFastIndisponible(f"Aucun utilisateur lisible : {texte[:120]}")
+    trouves, essais = {}, 0
+    # La liste est triée par NOM, pas par id : entre deux ids visibles se
+    # cachent des comptes (Cédric, Djellal manquaient). On lit donc toute
+    # la plage, pas seulement les ids affichés.
+    for i in range(graines[0], graines[-1] + 1):
+        essais += 1
+        u = await utilisateur(i, transport)
+        if u:
+            trouves[i] = u
+    for sens in (1, -1):
+        i, absents = (graines[-1] if sens > 0 else graines[0]), 0
+        while absents < trou and essais < plafond and i + sens > 0:
+            i += sens
+            essais += 1
+            u = await utilisateur(i, transport)
+            if u:
+                trouves[i], absents = u, 0
+            else:
+                absents += 1
+    return [trouves[k] for k in sorted(trouves)]
 
 
 async def envoyer_heures(*_args, **_kw):

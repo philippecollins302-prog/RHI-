@@ -156,13 +156,15 @@ def api_rhi_csv(semaine: str | None = None, c=Depends(db)):
     sortie = io.StringIO()
     w = csv.writer(sortie, delimiter=";")
     jours = [(lundi + dt.timedelta(days=i)).strftime("%a %d/%m") for i in range(7)]
-    w.writerow(["Personne", "CH", "Chantier / motif", *jours, "Total"])
+    w.writerow(["Personne", "CH", "Chantier / motif", *jours, "Total", "Validé par"])
     for p in base.personnes(c):
         r = base.rhi(c, p["nom"], lundi, maintenant())
+        v = r["validee"]
         for l in r["lignes"]:
             w.writerow([p["nom"], l["ch"] or "", l["libelle"],
                         *[str(x).replace(".", ",") for x in l["jours"]],
-                        str(l["total"]).replace(".", ",")])
+                        str(l["total"]).replace(".", ","),
+                        f"{v['par']} le {v['le'][:10]}" if v else ""])
     nom = f"RHI-{lundi.isoformat()}.csv"
     return PlainTextResponse("﻿" + sortie.getvalue(), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{nom}"'})
@@ -195,6 +197,8 @@ def api_corriger(pid: int, corr: Correction, c=Depends(db)):
         return base.corriger(c, pid, corr.qui, **champs)
     except KeyError:
         raise HTTPException(404, "Pointage inconnu")
+    except base.SemaineValidee as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
 
@@ -214,6 +218,8 @@ def api_saisir(s: Saisie, c=Depends(db)):
     try:
         pid = base.ajouter(c, s.personne.upper(), s.debut, s.fin, ch=s.ch, motif=s.motif,
                            libelle=s.libelle, qui=s.qui)
+    except base.SemaineValidee as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"id": pid}
@@ -222,6 +228,14 @@ def api_saisir(s: Saisie, c=Depends(db)):
 class Personne(BaseModel):
     actif: int | None = None
     equipe: str | None = None
+    cout_horaire: float | None = None   # 0 efface le coût saisi
+    interfast_user_id: int | None = None
+    delier: bool = False
+
+
+@app.get("/api/personnes/detail", dependencies=[Depends(acces_bureau)])
+def api_personnes_detail(c=Depends(db)):
+    return {"cout_defaut": base.cout_defaut(), "personnes": base.personnes_detail(c)}
 
 
 @app.patch("/api/personnes/{nom}", dependencies=[Depends(acces_bureau)])
@@ -231,6 +245,18 @@ def api_personne(nom: str, p: Personne, c=Depends(db)):
             c.execute("UPDATE personnes SET actif=? WHERE nom=?", (p.actif, nom.upper()))
         if p.equipe in ("atelier", "pose"):
             c.execute("UPDATE personnes SET equipe=? WHERE nom=?", (p.equipe, nom.upper()))
+        if p.delier:
+            base.lier(c, nom.upper(), None)
+        elif p.interfast_user_id is not None:
+            try:
+                base.lier(c, nom.upper(), p.interfast_user_id)
+            except ValueError as e:
+                raise HTTPException(422, str(e))
+        if p.cout_horaire is not None:
+            if p.cout_horaire < 0:
+                raise HTTPException(422, "Un coût horaire est positif")
+            c.execute("UPDATE personnes SET cout_horaire=? WHERE nom=?",
+                      (p.cout_horaire or None, nom.upper()))
     return {"ok": True}
 
 
@@ -251,6 +277,41 @@ async def api_interfast_chantiers(c=Depends(db)):
     except interfast.InterFastIndisponible as e:
         raise HTTPException(503, str(e))
     return base.importer_chantiers(c, liste)
+
+
+@app.post("/api/interfast/utilisateurs", dependencies=[Depends(acces_bureau)])
+async def api_interfast_utilisateurs(c=Depends(db)):
+    """Relie les personnes de RHI aux utilisateurs InterFast (lecture seule)."""
+    try:
+        liste = await interfast.utilisateurs(getattr(app.state, "transport_interfast", None))
+    except interfast.InterFastIndisponible as e:
+        raise HTTPException(503, str(e))
+    return base.importer_utilisateurs(c, liste)
+
+
+@app.get("/api/interfast/utilisateurs", dependencies=[Depends(acces_bureau)])
+def api_utilisateurs_interfast(c=Depends(db)):
+    return base.utilisateurs_interfast(c)
+
+
+class Validation(BaseModel):
+    personne: str
+    semaine: str
+    qui: str = "bureau"
+
+
+@app.post("/api/validations", dependencies=[Depends(acces_bureau)])
+def api_valider(v: Validation, c=Depends(db)):
+    try:
+        return base.valider(c, v.personne.upper(), _lundi(v.semaine), v.qui)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.delete("/api/validations", dependencies=[Depends(acces_bureau)])
+def api_devalider(personne: str, semaine: str, c=Depends(db)):
+    base.devalider(c, personne.upper(), _lundi(semaine))
+    return {"ok": True}
 
 
 # ═══════════════════════ PAGES ═══════════════════════

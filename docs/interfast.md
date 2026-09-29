@@ -25,6 +25,25 @@ l'agence « Serrurerie » (et « Grand compte » pour certains). Deux constats :
   ne peut chiffrer aucune rentabilité, quelle que soit la façon dont les
   heures y tombent.
 
+**Les limites du MCP, apprises en lisant les comptes** :
+- toute réponse est **coupée vers 4 000 caractères** (« … (tronqué) ») ;
+- `appeler_api` **ne transmet aucun paramètre** de requête (`page`, `size`,
+  `name` sont ignorés) : la liste `/v1/users` s'arrête donc au 7e compte ;
+- sous des appels **en parallèle**, il rend des 404 pour des comptes qui
+  existent (réponses mélangées), et parfois des 401 passagers.
+
+RHI lit donc les comptes **un par un, en série** (`/v1/users/{id}`, 735
+caractères), sur toute la plage d'ids visibles puis au-delà jusqu'à 12 absents
+d'affilée — la liste est triée par nom, les ids « cachés » se trouvent entre
+les ids affichés. Une minute pour 47 comptes. Chaque réponse est vérifiée
+(l'id rendu doit être l'id demandé) et les 401/429/5xx sont retentés.
+
+Ce que la relecture a montré le 29/09/2026 : 5 personnes des plannings reliées
+d'office, 1 prénom porté par deux comptes (le bureau tranche dans l'onglet
+Personnes), **3 opérateurs du planning atelier archivés dans InterFast**, et
+**9 noms des plannings sans aucun compte** (dont des intérimaires et des
+libellés d'équipe). Liste nominative : onglet Personnes, pas ce dépôt public.
+
 ## Ce que l'API ne permet pas
 
 **Aucune écriture d'heures.** Les feuilles de temps (*timesheets*) existent,

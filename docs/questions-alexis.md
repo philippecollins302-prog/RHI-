@@ -58,4 +58,10 @@ questions. Une ligne par réponse suffit.
     par personne, par chantier et par jour, avec la durée réelle) est décrit
     dans `docs/interfast.md` ; on l'essaiera d'abord sur une affaire de test.
 
+### Les comptes InterFast (relevé du 29/09/2026)
+11. Trois opérateurs présents dans ton planning atelier ont leur compte
+    **archivé** dans InterFast, et neuf noms des plannings n'ont **aucun
+    compte** (poseurs, intérimaires, libellés comme « SAV »). Qui doit en
+    avoir un ? La liste nominative est dans l'onglet *Personnes* de RHI.
+
 Merci !

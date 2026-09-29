@@ -31,6 +31,7 @@ planning ATE et le planning POSE SER. La tablette est sur
 | `RHI_DONNEES` | dossier de la base (`donnees/` par défaut ; `/donnees` sur Clever Cloud) |
 | `RHI_CODE_TERRAIN` | code des tablettes et téléphones |
 | `RHI_CODE_BUREAU` | code du bureau (voit tout) |
+| `RHI_COUT_HORAIRE` | taux horaire moyen (€/h) quand une personne n'a pas le sien |
 | `INTERFAST_VIP` | clé InterFast de VIP Plus — jamais dans le dépôt |
 
 ## Bancs

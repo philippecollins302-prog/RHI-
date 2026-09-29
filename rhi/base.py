@@ -38,7 +38,26 @@ CREATE TABLE IF NOT EXISTS personnes (
   nom TEXT PRIMARY KEY,
   equipe TEXT NOT NULL,            -- 'atelier' | 'pose'
   actif INTEGER NOT NULL DEFAULT 1,
-  vu_le TEXT
+  vu_le TEXT,
+  nom_complet TEXT NOT NULL DEFAULT '',  -- « Laurent Dupont », depuis InterFast
+  interfast_user_id INTEGER,
+  cout_interfast REAL,                    -- coût horaire lu dans InterFast (souvent 0)
+  cout_horaire REAL                       -- coût horaire saisi au bureau : prioritaire
+);
+CREATE TABLE IF NOT EXISTS utilisateurs_interfast (
+  id INTEGER PRIMARY KEY,
+  prenom TEXT NOT NULL,
+  nom TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT '',
+  archive INTEGER NOT NULL DEFAULT 0,
+  cout REAL
+);
+CREATE TABLE IF NOT EXISTS validations (
+  personne TEXT NOT NULL,
+  lundi TEXT NOT NULL,
+  par TEXT NOT NULL,
+  le TEXT NOT NULL,
+  PRIMARY KEY (personne, lundi)
 );
 CREATE TABLE IF NOT EXISTS affaires (
   ch TEXT PRIMARY KEY,
@@ -95,13 +114,26 @@ def connexion(chemin=None) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
-    # Une base créée avant l'arrivée d'InterFast n'a pas ces colonnes.
-    presentes = {r[1] for r in db.execute("PRAGMA table_info(affaires)")}
-    for col, decl in (("client", "TEXT NOT NULL DEFAULT ''"), ("titre", "TEXT NOT NULL DEFAULT ''"),
-                      ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER")):
-        if col not in presentes:
-            db.execute(f"ALTER TABLE affaires ADD COLUMN {col} {decl}")
+    # Une base plus ancienne que ces colonnes les reçoit ici : on ne perd
+    # jamais une base de production pour une colonne ajoutée.
+    for table, colonnes in AJOUTS.items():
+        presentes = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+        for col, decl in colonnes:
+            if col not in presentes:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
     return db
+
+
+AJOUTS = {
+    "affaires": [("client", "TEXT NOT NULL DEFAULT ''"), ("titre", "TEXT NOT NULL DEFAULT ''"),
+                 ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER")],
+    "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
+                  ("cout_interfast", "REAL"), ("cout_horaire", "REAL")],
+}
+
+
+class SemaineValidee(ValueError):
+    """Correction refusée : la semaine a été validée au bureau."""
 
 
 def maintenant() -> dt.datetime:
@@ -194,6 +226,143 @@ def importer_chantiers(db, chantiers: list) -> dict:
     inconnus = [r["ch"] for r in db.execute(
         "SELECT ch FROM affaires WHERE interfast_id IS NULL ORDER BY ch")]
     return {"chantiers": len(chantiers), "absents_d_interfast": inconnus}
+
+
+def importer_utilisateurs(db, utilisateurs: list) -> dict:
+    """Garde les comptes InterFast et relie chaque personne de RHI au sien.
+
+    Les plannings ne donnent qu'un prénom (« LAURENT ») ; InterFast a prénom
+    et nom. On ne relie que sur une correspondance UNIQUE parmi les comptes
+    non archivés : deux « Laurent » et c'est au bureau de trancher, jamais
+    au hasard — des heures posées sur le mauvais homme faussent deux RHI.
+    Une liaison faite à la main au bureau n'est jamais défaite ici."""
+    from .textes import normaliser
+    with db:
+        db.execute("DELETE FROM utilisateurs_interfast")
+        for u in utilisateurs:
+            db.execute("INSERT INTO utilisateurs_interfast VALUES (?,?,?,?,?,?)",
+                       (u["id"], u["prenom"], u["nom"], u["role"], int(u["archive"]), u.get("cout")))
+    actifs = [u for u in utilisateurs if not u.get("archive")]
+    archives = [u for u in utilisateurs if u.get("archive")]
+
+    def correspond(u, nom):
+        return normaliser(u["prenom"]) == nom or normaliser(f"{u['prenom']} {u['nom']}") == nom
+
+    rapport = {"liees": [], "deja_liees": [], "ambigus": {}, "archives": {}, "sans_correspondance": []}
+    with db:
+        for p in db.execute("SELECT nom, interfast_user_id FROM personnes").fetchall():
+            nom = p["nom"]
+            if p["interfast_user_id"]:
+                rapport["deja_liees"].append(nom)
+                _rafraichir_liaison(db, nom, p["interfast_user_id"])
+                continue
+            cand = [u for u in actifs if correspond(u, nom)]
+            if len(cand) == 1:
+                lier(db, nom, cand[0]["id"])
+                rapport["liees"].append(nom)
+            elif cand:
+                rapport["ambigus"][nom] = [f"{u['prenom']} {u['nom']}" for u in cand]
+            elif any(correspond(u, nom) for u in archives):
+                rapport["archives"][nom] = [f"{u['prenom']} {u['nom']}" for u in archives if correspond(u, nom)]
+            else:
+                rapport["sans_correspondance"].append(nom)
+    return rapport
+
+
+def _rafraichir_liaison(db, nom, uid):
+    u = db.execute("SELECT * FROM utilisateurs_interfast WHERE id=?", (uid,)).fetchone()
+    if u:
+        db.execute("UPDATE personnes SET nom_complet=?, cout_interfast=? WHERE nom=?",
+                   (f"{u['prenom']} {u['nom']}".strip(), u["cout"], nom))
+
+
+def lier(db, nom: str, uid) -> None:
+    """Relie (ou délie, uid None) une personne à un compte InterFast connu."""
+    if uid is None:
+        db.execute("""UPDATE personnes SET interfast_user_id=NULL, nom_complet='',
+                      cout_interfast=NULL WHERE nom=?""", (nom,))
+        return
+    if not db.execute("SELECT 1 FROM utilisateurs_interfast WHERE id=?", (uid,)).fetchone():
+        raise ValueError(f"Compte InterFast {uid} inconnu : relire les utilisateurs d'abord")
+    db.execute("UPDATE personnes SET interfast_user_id=? WHERE nom=?", (uid, nom))
+    _rafraichir_liaison(db, nom, uid)
+
+
+def utilisateurs_interfast(db) -> list:
+    return [dict(r) for r in db.execute(
+        "SELECT * FROM utilisateurs_interfast ORDER BY archive, prenom, nom")]
+
+
+def cout_defaut():
+    """Taux moyen de l'environnement (RHI_COUT_HORAIRE), ou None."""
+    try:
+        v = float(os.getenv("RHI_COUT_HORAIRE", "").replace(",", "."))
+        return v if v > 0 else None
+    except ValueError:
+        return None
+
+
+def couts(db) -> dict:
+    """{personne: coût horaire} — saisi au bureau, sinon InterFast (> 0), sinon le taux moyen."""
+    defaut = cout_defaut()
+    sortie = {}
+    for r in db.execute("SELECT nom, cout_horaire, cout_interfast FROM personnes"):
+        sortie[r["nom"]] = (r["cout_horaire"] or (r["cout_interfast"] if (r["cout_interfast"] or 0) > 0 else None)
+                            or defaut)
+    return sortie
+
+
+def personnes_detail(db) -> list:
+    """Toutes les personnes, actives ou non, avec ce que le bureau règle."""
+    c = couts(db)
+    return [dict(r) | {"cout_retenu": c.get(r["nom"])}
+            for r in db.execute("SELECT * FROM personnes ORDER BY equipe, nom")]
+
+
+# ═══════════════════════ VALIDATION HEBDOMADAIRE ═══════════════════════
+
+def _lundi_de(jour) -> str:
+    d = jour if isinstance(jour, dt.date) else dt.date.fromisoformat(str(jour)[:10])
+    return (d - dt.timedelta(days=d.weekday())).isoformat()
+
+
+def validation(db, personne: str, jour):
+    r = db.execute("SELECT par, le FROM validations WHERE personne=? AND lundi=?",
+                   (personne, _lundi_de(jour))).fetchone()
+    return dict(r) if r else None
+
+
+def valider(db, personne: str, lundi: dt.date, par: str) -> dict:
+    """Le bureau valide le RHI d'une personne pour une semaine.
+
+    Refusé s'il reste un pointage ouvert : on ne valide pas une semaine
+    dont une durée n'est pas connue. Une fois validée, la semaine ne se
+    corrige plus sans être dévalidée — c'est elle qui partira vers
+    InterFast le jour où l'envoi sera branché."""
+    fin = (lundi + dt.timedelta(days=7)).isoformat()
+    ouverts = db.execute("""SELECT COUNT(*) FROM pointages WHERE personne=? AND annule=0
+                            AND fin IS NULL AND debut >= ? AND debut < ?""",
+                         (personne, lundi.isoformat(), fin)).fetchone()[0]
+    if ouverts:
+        raise ValueError(f"{personne} a encore {ouverts} pointage(s) ouvert(s) cette semaine")
+    with db:
+        db.execute("""INSERT INTO validations VALUES (?,?,?,?)
+                      ON CONFLICT(personne, lundi) DO UPDATE SET par=excluded.par, le=excluded.le""",
+                   (personne, lundi.isoformat(), par, _iso(maintenant())))
+    return validation(db, personne, lundi)
+
+
+def devalider(db, personne: str, lundi: dt.date) -> None:
+    with db:
+        db.execute("DELETE FROM validations WHERE personne=? AND lundi=?",
+                   (personne, lundi.isoformat()))
+
+
+def _verifier_ouverte(db, personne, *jours):
+    for j in jours:
+        if j and validation(db, personne, j):
+            raise SemaineValidee(f"Semaine du {_lundi_de(j)} validée pour {personne} : "
+                                 "la dévalider avant de corriger")
 
 
 # ═══════════════════════ CE QU'ON PROPOSE SUR LA TABLETTE ═══════════════════════
@@ -300,6 +469,10 @@ def corriger(db, pid: int, qui: str, **champs) -> dict:
     for k in ("debut", "fin"):
         if maj.get(k):
             maj[k] = _iso(dt.datetime.fromisoformat(maj[k]))
+    avant = db.execute("SELECT personne, debut FROM pointages WHERE id=?", (pid,)).fetchone()
+    if not avant:
+        raise KeyError(pid)
+    _verifier_ouverte(db, avant["personne"], avant["debut"], maj.get("debut"))
     maj["corrige"] = f"{qui} · {_iso(maintenant())}"
     with db:
         n = db.execute(f"UPDATE pointages SET {', '.join(k + '=?' for k in maj)} WHERE id=?",
@@ -313,6 +486,7 @@ def ajouter(db, personne, debut, fin, ch=None, motif=None, libelle="", qui="bure
     """Saisie a posteriori au bureau (feuille papier, oubli de la tablette)."""
     if not ch and not motif:
         raise ValueError("Un CH ou un motif")
+    _verifier_ouverte(db, personne, debut)
     with db:
         cur = db.execute("""INSERT INTO pointages(personne, ch, motif, libelle, debut, fin,
                             appareil, corrige) VALUES (?,?,?,?,?,?, 'bureau', ?)""",
@@ -387,6 +561,7 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
     total = round(sum(par_jour), 2)
     hors = round(sum(l["total"] for l in rangees if not l["ch"]), 2)
     return {"personne": personne, "lundi": lundi.isoformat(), "lignes": rangees,
+            "validee": validation(db, personne, lundi),
             "par_jour": par_jour, "total": total, "hors_affaire": hors,
             "pointages": detail,
             "a_verifier": sum(1 for p in detail if p["alertes"])}
@@ -396,6 +571,7 @@ def point_affaire(db, ch: str, a: dt.datetime) -> dict:
     """Heures réelles d'une affaire, par personne et par semaine, face au prévu."""
     aff = db.execute("SELECT * FROM affaires WHERE ch=?", (ch,)).fetchone()
     par_personne, par_semaine, total, suspens = {}, {}, 0.0, 0.0
+    tarif = couts(db)
     for r in db.execute("SELECT * FROM pointages WHERE ch=? AND annule=0", (ch,)):
         p = dict(r)
         h = _heures(p, a)
@@ -417,6 +593,8 @@ def point_affaire(db, ch: str, a: dt.datetime) -> dict:
         "heures_en_suspens": round(suspens, 2),
         "consomme_pct": round(100 * total / prevues) if prevues else None,
         "par_personne": {k: round(v, 2) for k, v in sorted(par_personne.items(), key=lambda x: -x[1])},
+        "cout_main_oeuvre": round(sum(h * (tarif.get(k) or 0) for k, h in par_personne.items()), 2),
+        "sans_cout": sorted(k for k in par_personne if not tarif.get(k)),
         "par_semaine": {k: round(v, 2) for k, v in sorted(par_semaine.items())},
         "lignes_prevues": [dict(r) for r in db.execute(
             "SELECT designation, heures FROM lignes_prevues WHERE ch=?", (ch,))],
@@ -425,12 +603,15 @@ def point_affaire(db, ch: str, a: dt.datetime) -> dict:
 
 def affaires_pointees(db, a: dt.datetime) -> list:
     """Toutes les affaires, heures réelles et prévues, les plus consommées d'abord."""
-    reelles = {}
+    reelles, cout = {}, {}
+    tarif = couts(db)
     for r in db.execute("SELECT * FROM pointages WHERE ch IS NOT NULL AND annule=0"):
         p = dict(r)
         if _suspendu(p, a):
             continue
-        reelles[p["ch"]] = reelles.get(p["ch"], 0) + _heures(p, a)
+        h = _heures(p, a)
+        reelles[p["ch"]] = reelles.get(p["ch"], 0) + h
+        cout[p["ch"]] = cout.get(p["ch"], 0) + h * (tarif.get(p["personne"]) or 0)
     sortie = []
     for r in db.execute("SELECT * FROM affaires"):
         h = reelles.get(r["ch"], 0.0)
@@ -438,6 +619,7 @@ def affaires_pointees(db, a: dt.datetime) -> list:
             continue
         sortie.append({"ch": r["ch"], "chantier": r["chantier"], "conduc": r["conduc"],
                        "source": r["source"], "heures_reelles": round(h, 2),
+                       "client": r["client"], "cout_main_oeuvre": round(cout.get(r["ch"], 0), 2),
                        "heures_prevues": r["heures_prevues"],
                        "consomme_pct": round(100 * h / r["heures_prevues"]) if r["heures_prevues"] else None})
     return sorted(sortie, key=lambda x: -(x["consomme_pct"] or 0) if x["heures_prevues"] else -x["heures_reelles"])

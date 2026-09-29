@@ -23,8 +23,9 @@ est faite.
   (`ECRITURE = False`).
 - `public/index.html` + `terrain.js` — la tablette de l'atelier / le
   téléphone du chef d'équipe de pose.
-- `public/bureau.html` + `bureau.js` — RHI de la semaine, à vérifier, point
-  d'affaire, en ce moment, dépôt des plannings.
+- `public/bureau.html` + `bureau.js` — RHI de la semaine (et sa validation),
+  à vérifier, point d'affaire (heures et coût de main-d'œuvre), en ce
+  moment, personnes (compte InterFast, coût horaire), dépôt des plannings.
 
 ## Règles de fond (décidées en réunion — ne pas les perdre)
 - **Jamais bloqué.** Toucher un chantier arrête le précédent ; un CH absent
@@ -42,6 +43,12 @@ est faite.
   rangement, panne…) pointés comme une affaire.
 - **Un arrêt oublié ne gonfle pas une affaire** : un pointage ouvert depuis
   plus de 10 h sort du point d'affaire (« en suspens ») jusqu'à correction.
+- **Une semaine validée est verrouillée** au bureau (corrections refusées,
+  409) jusqu'à dévalidation ; la tablette, elle, n'est jamais bloquée. On ne
+  valide pas une semaine qui a un pointage ouvert.
+- **Coût horaire** : saisi au bureau > InterFast (s'il n'est pas à 0) >
+  `RHI_COUT_HORAIRE`. Une personne sans coût est NOMMÉE dans le point
+  d'affaire, jamais comptée à 0 en silence.
 - **Le CH est la seule clé fiable.** Les noms de chantier varient d'un
   fichier à l'autre (LES CIGALES/LES CIGLAES, ABCD/ACBD).
 
@@ -52,6 +59,9 @@ est faite.
 - L'API **n'écrit pas d'heures** : les timesheets ne se lisent qu'attachées à
   une intervention. `ECRITURE = False` tant que le chemin (A, B ou C dans
   docs/interfast.md) n'est pas décidé et essayé sur une affaire de test.
+- Le MCP coupe ses réponses à ~4 000 caractères, ignore les paramètres
+  d'`appeler_api` et se trompe sous les appels parallèles : les comptes se
+  lisent un par un, en série (docs/interfast.md).
 - Coût horaire des techniciens à 0 dans InterFast : aucune rentabilité
   possible là-bas tant qu'il n'est pas renseigné.
 - Clé `INTERFAST_VIP` dans l'environnement **uniquement** — ce dépôt est
