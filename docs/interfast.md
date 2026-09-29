@@ -88,6 +88,56 @@ compte, CH inconnu d'InterFast, chantier sans client). Rien n'est écrit.
 Brancher A, ce sera appeler `planifier_intervention` puis `confirmer_action`
 pour chaque ligne « prête » et garder la référence dans `pointages.interfast`.
 
+### Comment InterFast le fait « en classique » (centre d'aide, 29/09/2026)
+
+Décision de Philippe : les heures arrivent **comme des cases dans le planning,
+qu'on valide ensuite**. Selon le centre d'aide InterFast, le chemin
+habituel est le suivant :
+
+1. **Le bureau planifie** une intervention sur le chantier : c'est la case
+   dans le planning (« Planifier une intervention »). Elle peut porter
+   plusieurs techniciens.
+2. **Le technicien la termine** dans l'appli mobile (« Terminer
+   l'intervention »). Il saisit son heure de début, son heure de fin et sa
+   pause (« Date et heures pour [Technicien] ») et signe le rapport. Sur
+   l'app web, il faut « Générer le rapport ». Une intervention terminée
+   porte un ✅ dans le planning.
+3. Ces heures deviennent une **feuille de temps**. Elle apparaît **en
+   orange** tant qu'elle n'est pas validée (Équipe → Voir la fiche →
+   Feuilles de temps) : le bureau clique dessus puis sur « **Valider** » ou
+   « Refuser ».
+4. Les heures validées, multipliées par le **coût horaire** de la fiche
+   (Feuilles de temps → coût horaire), alimentent la **marge réelle** du
+   chantier. Tant que ce coût est à 0 € (c'est le cas au 29/09), la marge
+   réelle ne voit pas la main-d'œuvre.
+
+Ce que l'API permet, vérifié avec `explorer_api` le 29/09/2026 :
+
+- **l'étape 1 seulement.** On peut créer la case avec
+  `planifier_intervention` (plusieurs techniciens, date, heure, durée) puis
+  `confirmer_action`, et la déplacer tant qu'elle n'est pas terminée avec
+  `replanifier_intervention`.
+- **Pas les étapes 2 et 3.** Aucun endpoint ne permet de terminer une
+  intervention, d'écrire une feuille de temps ou de la valider : tous les
+  chemins `timesheets` sont en GET, et une recherche sur `finish` ou
+  `status` ne renvoie rien d'utile (`/v1/processing-statuses` est vide).
+
+Conséquence pour le chemin A : RHI peut **poser les cases** d'une semaine
+validée, avec les bonnes heures, sur le bon CH et avec les bons
+techniciens. Mais **« terminer » et « valider » restent des clics dans
+InterFast** : le technicien termine, ou le bureau depuis l'app web, puis le
+bureau valide la feuille de temps. Pour que ces clics restent peu nombreux,
+mieux vaut **une case par CH et par jour, avec toute l'équipe dessus**,
+plutôt qu'une case par personne : le rapport d'intervention porte déjà les
+heures de chaque technicien séparément. À confirmer sur une affaire de
+test : une case planifiée mais non terminée ne compte **pas** dans la marge
+réelle, puisque seules les feuilles de temps y entrent.
+
+Sources : [Suivre les heures et la rentabilité d'un chantier](https://help.inter-fast.co/fr/articles/11654458-suivre-les-heures-et-la-rentabilite-d-un-chantier),
+[Remplir un rapport d'intervention (App Web)](https://help.inter-fast.co/fr/articles/12890091-remplir-modifier-un-rapport-d-intervention-app-web),
+[Gérer un chantier](https://help.inter-fast.co/fr/articles/13223632-guide-complet-gerer-un-chantier-dans-interfast),
+[Feuilles de temps – suivi des heures](https://aide.inter-fast.fr/fr/article/feuilles-de-temps-suivi-des-heures-atwpd6/).
+
 Question à poser au support InterFast : *« Existe-t-il un moyen, par l'API ou
 le MCP, d'enregistrer du temps passé (timesheet) sur un chantier ou une
 intervention ? »*
