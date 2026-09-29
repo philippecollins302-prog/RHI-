@@ -197,6 +197,14 @@ verif(c.post("/api/interfast/envois", json={"semaine": "2026-09-28"}).status_cod
       "écriture coupée : l'envoi est refusé, rien n'est tenté")
 
 # La pause : le temps passé ailleurs entre deux morceaux du même CH.
+verif(c.post("/api/pointages", json={"personne": "JEAN", "ch": "CH00901", "debut": "2026-10-07T07:00",
+                                     "fin": "2026-10-07T07:00"}).status_code == 422,
+      "une durée nulle est refusée : elle cachait une journée oubliée sans rien y mettre")
+pz = c.post("/api/pointages", json={"personne": "JEAN", "ch": "CH00901", "debut": "2026-10-08T07:00",
+                                    "fin": "2026-10-08T09:00"}).json()["id"]
+verif(c.patch(f"/api/pointages/{pz}", json={"fin": "2026-10-08T06:00"}).status_code == 422,
+      "une correction qui met la fin avant le début est refusée")
+c.patch(f"/api/pointages/{pz}", json={"annule": 1})
 for d_, f_, ch_ in (("07:00", "09:00", "CH00901"), ("09:00", "10:00", "CH00902"), ("10:00", "12:30", "CH00901")):
     c.post("/api/pointages", json={"personne": "JEAN", "ch": ch_, "debut": f"2026-10-06T{d_}", "fin": f"2026-10-06T{f_}"})
 c.post("/api/validations", json={"personne": "JEAN", "semaine": "2026-10-05", "qui": "Alexis"})
@@ -258,6 +266,8 @@ def mcp_ecriture(req: httpx.Request) -> httpx.Response:
         texte = lecture(args["chemin"])
     else:
         texte = reponses[nom]
+        if isinstance(texte, Exception):
+            raise texte
     return httpx.Response(200, text="data: " + json.dumps({"result": {"content": [{"type": "text", "text": texte}]}}))
 
 
@@ -333,6 +343,56 @@ try:
     ecrits.clear()
     c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
     verif(ecrits == [], "une case peut-être créée n'est pas renvoyée (pas de doublon)")
+    etat = lambda id_: {x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-09-28").json()["cases"]}[id_]  # noqa: E731
+    verif(etat("CH00902|2026-09-29")["etat"] == "à vérifier", "l'onglet dit qu'il faut regarder dans InterFast")
+
+    # Le bureau tranche : elle n'existe pas → elle redevient prête.
+    tranche = lambda ref: c.post("/api/interfast/cases/reference",  # noqa: E731
+                                 json={"ch": "CH00902", "jour": "2026-09-29", "ref": ref})
+    verif(tranche("CH123").status_code == 409, "une référence qui n'en est pas une est refusée")
+    verif(tranche("").status_code == 200 and etat("CH00902|2026-09-29")["etat"] == "prête",
+          "« elle n'existe pas » : la case redevient prête à partir")
+    # Un délai dépassé pendant la confirmation : incertain, pas un 500.
+    reponses["confirmer_action"] = httpx.ConnectTimeout("délai")
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
+    verif(r.status_code == 200 and "la case existe peut-être" in r.json()["echecs"][0]["erreur"],
+          f"délai dépassé à la confirmation : dit, jamais un 500 : {r.status_code} {r.text[:200]}")
+    verif(etat("CH00902|2026-09-29")["etat"] == "à vérifier", "et marquée à vérifier, pas renvoyable")
+    # Elle existe : on garde sa vraie référence.
+    verif(tranche("in00401").json()["ref"] == "IN00401", "« elle existe » : sa référence est gardée")
+    verif(etat("CH00902|2026-09-29")["ref"] == "IN00401" and etat("CH00902|2026-09-29")["etat"] == "posée", "posée")
+    verif(tranche("IN00402").status_code == 409, "une vraie référence ne se réécrit pas")
+    # « Aucune action » à la confirmation (un 502 rejoué après création) : incertain aussi.
+    reponses["confirmer_action"] = "Aucune action en attente."
+    base.importer_chantiers(base.connexion(appli.app.state.chemin_base),
+                            [{"id": 779, "ch": "CH00903", "titre": "École", "client": "VILLE", "statut": "En cours"}])
+    with base.connexion(appli.app.state.chemin_base) as b3:
+        b3.execute("""INSERT INTO pointages(personne, ch, debut, fin) VALUES
+                      ('ZOE', 'CH00903', '2026-10-06T07:00:00', '2026-10-06T09:00:00')""")
+        b3.execute("INSERT INTO validations VALUES ('ZOE', '2026-10-05', 'Alexis', '2026-10-06')")
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
+    verif("peut-être" in r.json()["echecs"][0]["erreur"], f"« Aucune action » après confirmation : incertain : {r.text}")
+
+    # Un seul envoi à la fois.
+    class Pris:
+        def locked(self):
+            return True
+    vrai, appli.ENVOI_EN_COURS = appli.ENVOI_EN_COURS, Pris()
+    verif(c.post("/api/interfast/envois", json={"semaine": "2026-09-28"}).status_code == 409,
+          "un second envoi pendant le premier est refusé : sinon chaque case partait deux fois")
+    appli.ENVOI_EN_COURS = vrai
+
+    # Validée après la pose : « à compléter », puis « ajoutés dans InterFast ».
+    with base.connexion(appli.app.state.chemin_base) as b4:
+        b4.execute("""UPDATE pointages SET interfast=NULL WHERE personne='ZOE' AND ch='CH00901'
+                      AND substr(debut, 1, 10)='2026-09-28'""")
+    c28 = etat("CH00901|2026-09-28")
+    verif(c28["etat"] == "à compléter" and c28["a_ajouter"] == ["Zoe Aubert"], f"à compléter : {c28['etat']}")
+    r = c.post("/api/interfast/cases/completer", json={"ch": "CH00901", "jour": "2026-09-28"})
+    verif(r.json()["pointages"] == 1 and etat("CH00901|2026-09-28")["etat"] == "écart",
+          "ajoutée à la main : la case sort de « à compléter » (et retrouve son écart d'heures)")
+    verif(c.delete("/api/validations?personne=ZOE&semaine=2026-09-28").status_code == 409,
+          "et sa semaine ne se dévalide plus en silence")
 finally:
     interfast.ECRITURE = False
 

@@ -665,9 +665,12 @@ def corriger(db, pid: int, qui: str, **champs) -> dict:
     for k in ("debut", "fin"):
         if maj.get(k):
             maj[k] = _iso(dt.datetime.fromisoformat(maj[k]))
-    avant = db.execute("SELECT personne, debut FROM pointages WHERE id=?", (pid,)).fetchone()
+    avant = db.execute("SELECT personne, debut, fin FROM pointages WHERE id=?", (pid,)).fetchone()
     if not avant:
         raise KeyError(pid)
+    debut, fin = maj.get("debut") or avant["debut"], maj.get("fin") or avant["fin"]
+    if fin and fin <= debut:
+        raise ValueError("La fin doit suivre le début")
     _verifier_ouverte(db, avant["personne"], avant["debut"], maj.get("debut"))
     maj["corrige"] = f"{qui} · {_iso(maintenant())}"
     with db:
@@ -682,6 +685,11 @@ def ajouter(db, personne, debut, fin, ch=None, motif=None, libelle="", qui="bure
     """Saisie a posteriori au bureau (feuille papier, oubli de la tablette)."""
     if not ch and not motif:
         raise ValueError("Un CH ou un motif")
+    # Une durée nulle cachait une journée oubliée sans rien y mettre (un clic
+    # sur « Ajouter » sans toucher aux heures), et la validation de masse la
+    # laissait alors passer.
+    if dt.datetime.fromisoformat(fin) <= dt.datetime.fromisoformat(debut):
+        raise ValueError("La fin doit suivre le début")
     _verifier_ouverte(db, personne, debut)
     with db:
         cur = db.execute("""INSERT INTO pointages(personne, ch, motif, libelle, debut, fin,
@@ -1293,7 +1301,8 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
                 recu is None or abs(recu["minutes"] - e["heures"] * 60) > ECART_MIN))
         a_ajouter = [e["technicien"] for e in equipe if e["valide"] and not e["envoye"]] if pose else []
         if pose:
-            etat = "à compléter" if a_ajouter else ("terminée" if pose["terminee"] else "posée")
+            etat = ("à vérifier" if pose["ref"] == A_VERIFIER else "à compléter" if a_ajouter
+                    else "terminée" if pose["terminee"] else "posée")
             if etat == "terminée" and any(e["ecart"] for e in equipe):
                 etat = "écart"
         elif attente:
@@ -1314,7 +1323,8 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
     compte = lambda e: sum(1 for x in sortie if x["etat"] == e)  # noqa: E731
     return {"lundi": lundi.isoformat(), "cases": sortie, "personnes_validees": sorted(valides),
             "pretes": compte("prête"), "bloquees": compte("bloquée"), "en_attente": compte("en attente"),
-            "posees": compte("posée") + compte("à compléter"), "terminees": compte("terminée"),
+            "posees": compte("posée") + compte("à compléter") + compte("à vérifier"),
+            "terminees": compte("terminée"),
             "ecarts": compte("écart"),
             "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prête"), 2)}
 
@@ -1332,6 +1342,53 @@ def case_posee(db, case: dict, ref: str) -> None:
 
 
 ECART_MIN = 15
+
+
+A_VERIFIER = "À VÉRIFIER"
+
+
+def _case(db, ch: str, jour: str):
+    r = db.execute("SELECT * FROM cases_interfast WHERE ch=? AND jour=?", (ch, jour)).fetchone()
+    if not r:
+        raise KeyError(f"{ch} le {jour} : aucune case posée")
+    return dict(r)
+
+
+def completer_case(db, ch: str, jour: str) -> int:
+    """Les validés arrivés après la pose ont été ajoutés à la main dans la
+    case InterFast : leurs pointages prennent la référence de la case.
+    Sans ce geste, la case restait « à compléter » pour toujours et leur
+    semaine se dévalidait en silence."""
+    case = _case(db, ch, jour)
+    lundi = _lundi_de(jour)
+    with db:
+        return db.execute(
+            """UPDATE pointages SET interfast=? WHERE ch=? AND substr(debut, 1, 10)=? AND annule=0
+               AND fin IS NOT NULL AND interfast IS NULL
+               AND personne IN (SELECT personne FROM validations WHERE lundi=?)""",
+            (case["ref"], ch, jour, lundi)).rowcount
+
+
+def reference_case(db, ch: str, jour: str, ref: str) -> dict:
+    """Une case « À VÉRIFIER » tranchée par le bureau, après un œil dans
+    InterFast : elle y est (on garde sa vraie référence IN…), ou elle n'y
+    est pas (on l'efface de RHI, et elle redevient prête à partir).
+    Seule une case À VÉRIFIER se tranche : une vraie référence ne se
+    réécrit pas."""
+    case = _case(db, ch, jour)
+    if case["ref"] != A_VERIFIER:
+        raise ValueError(f"La case {ch} du {jour} a déjà sa référence ({case['ref']})")
+    ref = ref.strip().upper()
+    if ref and not re.fullmatch(r"IN\d{4,6}", ref):
+        raise ValueError("Une référence InterFast : IN suivi de chiffres (ex. IN00123)")
+    with db:
+        if ref:
+            db.execute("UPDATE cases_interfast SET ref=? WHERE ch=? AND jour=?", (ref, ch, jour))
+        else:
+            db.execute("DELETE FROM cases_interfast WHERE ch=? AND jour=?", (ch, jour))
+        db.execute("""UPDATE pointages SET interfast=? WHERE interfast=? AND ch=?
+                      AND substr(debut, 1, 10)=?""", (ref or None, A_VERIFIER, ch, jour))
+    return {"ch": ch, "jour": jour, "ref": ref or None}
 
 
 def cases_posees(db, lundi: dt.date) -> list:

@@ -109,9 +109,18 @@ InterFast* :
 - **Poser** (`POST /api/interfast/envois`) : `planifier_intervention` puis
   `confirmer_action`, une case à la fois. La référence IN… est gardée sur la
   case (`cases_interfast`) et sur chaque pointage, donc jamais deux envois.
-  Un refus (« ❌ ») s'arrête avant la confirmation. Une confirmation sans
-  référence est marquée « À VÉRIFIER » et n'est pas renvoyée. Répond 403 tant
-  que `ECRITURE = False` ;
+  **Un seul envoi à la fois** : un second clic, ou un autre poste, reçoit un
+  409. Un refus (« ❌ ») à la planification s'arrête avant la confirmation.
+  Une fois la confirmation partie, **tout ce qui n'est pas « IN… créée »
+  est incertain** : pas de référence, « Aucune action » (un 502 rejoué
+  après création répond ainsi), un délai dépassé. La case est alors
+  marquée « À VÉRIFIER » et ne se renvoie pas. Le bureau regarde dans
+  InterFast et tranche : « elle existe », avec sa référence IN…, ou « elle
+  n'existe pas », et elle redevient prête. Répond 403 tant que
+  `ECRITURE = False` ;
+- une personne validée **après** la pose rend la case « à compléter » : on
+  l'ajoute à la main dans InterFast, puis « C'est fait : ajoutés dans
+  InterFast » rattache ses pointages à la case ;
 - **Relire** (`POST /api/interfast/suivi`), en lecture seule : ce que
   chaque case posée a **reçu à sa clôture**, technicien par technicien, face
   au RHI. Un écart de plus de 15 min est signalé : c'est une saisie à

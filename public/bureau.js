@@ -175,7 +175,7 @@ async function ongletVerifier() {
       <select data-champ="personne">${gens.map((g) => `<option>${esc(g.nom)}</option>`).join('')}</select>
       <input data-champ="ch" placeholder="CH00…" style="width:130px">
       <input type="datetime-local" data-champ="debut" value="${esc(jour)}">
-      <input type="datetime-local" data-champ="fin" value="${esc(jour)}">
+      <input type="datetime-local" data-champ="fin" value="${esc(vue.semaine + 'T12:00')}">
       <button id="ajouter">Ajouter</button>
     </div>` + (d.oublis.length ? `
     <div class="carte">
@@ -418,7 +418,7 @@ async function ongletPersonnes() {
 async function ongletEnvois() {
   const d = await api('/api/interfast/envois?semaine=' + vue.semaine);
   const cl = {'prête': 'p-vert', 'bloquée': 'p-rouge', 'en attente': 'p-ambre', 'posée': 'p-ambre',
-    'à compléter': 'p-rouge', 'terminée': 'p-vert', 'écart': 'p-rouge'};
+    'à compléter': 'p-rouge', 'terminée': 'p-vert', 'écart': 'p-rouge', 'à vérifier': 'p-rouge'};
   const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const ligneEquipe = (e) => `<tr>
       <td>${esc(e.technicien)}${e.compte ? '' : ' <span class="pastille p-rouge">sans compte</span>'}
@@ -451,7 +451,12 @@ async function ongletEnvois() {
       ${d.ecriture && x.etat === 'prête' ? `<button class="btn" data-poser="${esc(x.id)}">Poser cette case</button>` : ''}
       ${x.blocages.length ? `<br><span class="doux">Bloquée : ${esc(x.blocages.join(' · '))}</span>` : ''}
       ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
-      ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>` : ''}
+      ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>
+        <button data-completer="${esc(x.id)}">C'est fait : ajoutés dans InterFast</button>` : ''}
+      ${x.etat === 'à vérifier' ? `<br><span class="doux">InterFast n'a pas clairement confirmé : regarder dans son planning si la case existe.</span>
+        <input data-ref-pour="${esc(x.id)}" placeholder="IN00…" style="width:110px">
+        <button data-trancher="${esc(x.id)}" data-oui="1">Elle existe : c'est cette référence</button>
+        <button data-trancher="${esc(x.id)}" data-oui="">Elle n'existe pas : la renvoyer</button>` : ''}
       <div class="defile"><table>
         <tr><th>Pour terminer la case</th><th>Début</th><th>Fin</th><th>Pause</th><th class="n">Heures RHI</th><th class="n">Reçu par InterFast</th></tr>
         ${x.equipe.map(ligneEquipe).join('')}
@@ -460,14 +465,30 @@ async function ongletEnvois() {
   brancherSemaine();
   const retour = $('#retour-envoi');
   const bouton = (id, fn) => { const b = $('#' + id); if (b) b.onclick = fn; };
+  const geste = async (chemin, id, ref) => {
+    const [ch, jour] = id.split('|');
+    try { await api(chemin, {method: 'POST', json: {ch, jour, ref: ref || ''}}); afficher(); }
+    catch (e) { dire(e.message); }
+  };
+  document.querySelectorAll('[data-completer]').forEach((b) => {
+    b.onclick = () => geste('/api/interfast/cases/completer', b.dataset.completer);
+  });
+  document.querySelectorAll('[data-trancher]').forEach((b) => {
+    b.onclick = () => {
+      const ref = b.dataset.oui ? b.parentElement.querySelector('[data-ref-pour]').value : '';
+      if (b.dataset.oui && !ref.trim()) { dire('La référence IN… lue dans InterFast'); return; }
+      geste('/api/interfast/cases/reference', b.dataset.trancher, ref);
+    };
+  });
   bouton('poser', async () => {
+    $('#poser').disabled = true;
     retour.textContent = 'Envoi en cours, une case à la fois…';
     try {
       const r = await api('/api/interfast/envois', {method: 'POST', json: {semaine: vue.semaine}});
       dire(`${r.posees.length} cases posées` + (r.echecs.length ? `, ${r.echecs.length} en échec : ` +
         r.echecs.map((x) => x.id + ' — ' + x.erreur).join(' · ') : ''));
       afficher();
-    } catch (e) { retour.textContent = e.message; }
+    } catch (e) { retour.textContent = e.message; $('#poser').disabled = false; }
   });
   document.querySelectorAll('[data-poser]').forEach((b) => {
     b.onclick = async () => {

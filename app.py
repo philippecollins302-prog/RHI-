@@ -472,6 +472,9 @@ def api_envois(semaine: str | None = None, c=Depends(db)):
     return base.envois(c, _lundi(semaine), maintenant()) | {"ecriture": interfast.ECRITURE}
 
 
+ENVOI_EN_COURS = asyncio.Lock()
+
+
 class Envoi(BaseModel):
     semaine: str
     cases: list[str] | None = None      # « CH00901|2026-09-28 » ; rien = toutes les prêtes
@@ -487,23 +490,54 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
     ECRITURE = False : 403, et rien n'est tenté."""
     if not interfast.ECRITURE:
         raise HTTPException(403, "Écriture InterFast coupée : rien n'est envoyé (docs/interfast.md)")
-    t = getattr(app.state, "transport_interfast", None)
-    d = base.envois(c, _lundi(e.semaine), maintenant())
-    voulues = [x for x in d["cases"] if x["etat"] == "prête" and (e.cases is None or x["id"] in e.cases)]
-    posees, echecs = [], []
-    for case in voulues:
-        try:
-            ref = await interfast.poser_case(case, t)
-        except interfast.CaseSansReference as err:
-            base.case_posee(c, case, "À VÉRIFIER")
-            echecs.append({"id": case["id"], "erreur": str(err)})
-            continue
-        except interfast.InterFastIndisponible as err:
-            echecs.append({"id": case["id"], "erreur": str(err)})
-            continue
-        base.case_posee(c, case, ref)
-        posees.append({"id": case["id"], "ref": ref})
+    # Un seul envoi à la fois, quel que soit le poste : un second clic
+    # pendant un envoi de plusieurs minutes posait chaque case deux fois.
+    if ENVOI_EN_COURS.locked():
+        raise HTTPException(409, "Un envoi vers InterFast est déjà en cours : attendre qu'il finisse")
+    async with ENVOI_EN_COURS:
+        t = getattr(app.state, "transport_interfast", None)
+        d = base.envois(c, _lundi(e.semaine), maintenant())
+        voulues = [x for x in d["cases"] if x["etat"] == "prête" and (e.cases is None or x["id"] in e.cases)]
+        posees, echecs = [], []
+        for case in voulues:
+            try:
+                ref = await interfast.poser_case(case, t)
+            except interfast.CaseSansReference as err:
+                base.case_posee(c, case, base.A_VERIFIER)
+                echecs.append({"id": case["id"], "erreur": str(err)})
+                continue
+            except interfast.InterFastIndisponible as err:
+                echecs.append({"id": case["id"], "erreur": str(err)})
+                continue
+            base.case_posee(c, case, ref)
+            posees.append({"id": case["id"], "ref": ref})
     return {"posees": posees, "echecs": echecs}
+
+
+class CaseDuBureau(BaseModel):
+    ch: str
+    jour: str
+    ref: str = ""
+
+
+@app.post("/api/interfast/cases/completer", dependencies=[Depends(acces_bureau)])
+def api_completer_case(k: CaseDuBureau, c=Depends(db)):
+    """« Ajoutés dans InterFast » : les retardataires sont dans la case."""
+    try:
+        return {"pointages": base.completer_case(c, k.ch, k.jour)}
+    except KeyError as err:
+        raise HTTPException(404, str(err))
+
+
+@app.post("/api/interfast/cases/reference", dependencies=[Depends(acces_bureau)])
+def api_reference_case(k: CaseDuBureau, c=Depends(db)):
+    """Trancher une case À VÉRIFIER : sa vraie référence, ou « pas créée »."""
+    try:
+        return base.reference_case(c, k.ch, k.jour, k.ref)
+    except KeyError as err:
+        raise HTTPException(404, str(err))
+    except ValueError as err:
+        raise HTTPException(409, str(err))
 
 
 @app.post("/api/interfast/suivi", dependencies=[Depends(acces_bureau)])

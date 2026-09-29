@@ -61,10 +61,13 @@ async def _appel(methode: str, params: dict, transport=None) -> dict:
     # accepte la même requête une seconde plus tard (constaté le 29/09/2026
     # en lisant les utilisateurs un par un). Trois essais, espacés.
     for essai in range(3):
-        async with httpx.AsyncClient(timeout=40, transport=transport) as h:
-            r = await h.post(f"{MCP_URL}?apiKey={k}", json=corps, headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream"})
+        try:
+            async with httpx.AsyncClient(timeout=40, transport=transport) as h:
+                r = await h.post(f"{MCP_URL}?apiKey={k}", json=corps, headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream"})
+        except httpx.HTTPError as e:   # délai dépassé, connexion coupée : dit, jamais un 500 muet
+            raise InterFastIndisponible(f"InterFast injoignable : {type(e).__name__}") from e
         if r.status_code not in (401, 429, 502, 503) or essai == 2:
             break
         await asyncio.sleep(1 + 2 * essai)
@@ -270,8 +273,11 @@ class EcritureCoupee(InterFastIndisponible):
 
 
 class CaseSansReference(InterFastIndisponible):
-    """InterFast a confirmé sans rendre de référence IN… : la case existe
-    peut-être. On ne la renvoie pas (doublon) ; on la fait vérifier."""
+    """La confirmation est partie, mais sa réponse ne dit pas clairement
+    « créée, IN… » : pas de référence, un refus, un délai dépassé. La case
+    existe peut-être — une confirmation qui échoue sur un 502 APRÈS avoir
+    créé la case est rejouée, et le second essai répond « Aucune action ».
+    On ne la renvoie pas (doublon) ; le bureau vérifie dans InterFast."""
 
 
 _REF = re.compile(r"\bIN\d{4,6}\b")
@@ -296,9 +302,13 @@ async def poser_case(case: dict, transport=None) -> str:
     recap = await outil("planifier_intervention", args, transport)
     if any(x in recap for x in _REFUS):
         raise InterFastIndisponible(f"InterFast refuse la case : {recap[:300]}")
-    reponse = await outil("confirmer_action", {"confirmation": True}, transport)
+    # À partir d'ici, tout ce qui n'est pas « créée, IN… » est incertain.
+    try:
+        reponse = await outil("confirmer_action", {"confirmation": True}, transport)
+    except InterFastIndisponible as e:
+        raise CaseSansReference(f"Confirmation sans réponse ({e}) : la case existe peut-être") from e
     if any(x in reponse for x in _REFUS):
-        raise InterFastIndisponible(f"InterFast refuse la confirmation : {reponse[:300]}")
+        raise CaseSansReference(f"Confirmation refusée ou déjà faite ({reponse[:300]}) : la case existe peut-être")
     m = _REF.search(reponse)
     if not m:
         raise CaseSansReference(f"Confirmée sans référence : {reponse[:300]}")
