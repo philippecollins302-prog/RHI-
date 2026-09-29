@@ -42,9 +42,9 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
   la recherche sur la tablette.
 
 ## Plus tard
-- ~~Écran d'atelier qui fait défiler atelier / pose~~ — fait (`/ecran`).
-  Reste le planning TRAITEMENT (départs en traitement de surface) à y ajouter.
+- ~~Écran d'atelier qui fait défiler atelier / pose / traitement~~ — fait
+  (`/ecran`).
 - ~~Analyse de la marche en avant BET → fab → pose~~ — faite (bureau →
   *Marche en avant*), en code et avec bancs : une date de fabrication future
-  n'est jamais « réalisée ». Reste : l'envoi automatique du lundi 7 h (mail),
-  et le planning TRAITEMENT dans la chaîne.
+  n'est jamais « réalisée », et le traitement de surface est dans la chaîne.
+  Reste : l'envoi automatique du lundi 7 h (mail).

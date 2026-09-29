@@ -128,6 +128,25 @@ InterFast* :
   d'abord la case dans InterFast.
 
 Reste l'essai sur une affaire de test, avec Philippe, avant `ECRITURE = True`.
+
+**Déroulé de l'essai** (une seule case, un jour calme) :
+
+1. Choisir dans InterFast un chantier de test, avec un client, et deux
+   techniciens reliés dans RHI (onglet *Personnes*).
+2. Au bureau, saisir pour eux un pointage sur ce CH (*À vérifier* →
+   « Ajouter un pointage oublié »), puis valider leurs deux semaines.
+3. Passer `ECRITURE = True` sur un poste de dev branché sur la vraie clé,
+   jamais en production pour ce premier essai.
+4. *Vers InterFast* → **Poser cette case**, sur cette case seulement.
+   Vérifier dans le planning InterFast la date, l'heure, la durée, les deux
+   techniciens et le chantier.
+5. Terminer la case dans InterFast en recopiant les heures affichées par RHI,
+   en en faussant exprès une de 30 min. Puis valider les feuilles de temps.
+6. **Relire les heures reçues par InterFast** : RHI doit montrer la case
+   « écart » sur le bon technicien.
+7. Regarder la marge réelle du chantier dans InterFast : a-t-elle bougé ? Si
+   non, le coût horaire de ces techniciens est sans doute à 0 €.
+8. Remettre `ECRITURE = False`, et consigner ici ce qui a été vu.
 Trois choses à y vérifier :
 
 1. la case se crée sur le bon chantier, avec toute l'équipe ;

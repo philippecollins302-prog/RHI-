@@ -103,7 +103,18 @@ async function ongletRhi() {
 async function ongletVerifier() {
   const d = await api('/api/rhi?semaine=' + vue.semaine);
   const douteux = d.releves.flatMap((r) => r.pointages.filter((p) => p.alertes.length));
-  $('#vue').innerHTML = choixSemaine() + (douteux.length ? `
+  const gens = await api('/api/personnes');
+  const jour = vue.semaine + 'T07:00';
+  $('#vue').innerHTML = choixSemaine() + `
+    <div class="carte" id="ajout">
+      <strong>Ajouter un pointage oublié</strong>
+      <span class="doux">— une journée pas pointée, un chantier oublié sur la tablette.</span><br>
+      <select data-champ="personne">${gens.map((g) => `<option>${esc(g.nom)}</option>`).join('')}</select>
+      <input data-champ="ch" placeholder="CH00…" style="width:130px">
+      <input type="datetime-local" data-champ="debut" value="${esc(jour)}">
+      <input type="datetime-local" data-champ="fin" value="${esc(jour)}">
+      <button id="ajouter">Ajouter</button>
+    </div>` + (douteux.length ? `
     <div class="defile"><table>
       <tr><th>Qui</th><th>CH / motif</th><th>Début</th><th>Fin</th><th class="n">Durée</th><th>Pourquoi</th><th></th></tr>
       ${douteux.map((p) => `<tr data-id="${p.id}">
@@ -123,6 +134,14 @@ async function ongletVerifier() {
     try { await api('/api/pointages/' + tr.dataset.id, {method: 'PATCH', json: corps}); dire('Corrigé'); afficher(); }
     catch (e) { dire(e.message); }
   });
+  $('#ajouter').onclick = async () => {
+    const corps = {qui: lire('rhi.qui', '') || 'bureau'};
+    document.querySelectorAll('#ajout [data-champ]').forEach((i) => { corps[i.dataset.champ] = i.value.trim(); });
+    if (!/^CH\d{5}$/i.test(corps.ch)) { dire('Un CH complet : CH suivi de cinq chiffres'); return; }
+    corps.ch = corps.ch.toUpperCase();
+    try { await api('/api/pointages', {method: 'POST', json: corps}); dire('Ajouté au RHI de ' + corps.personne); afficher(); }
+    catch (e) { dire(e.message); }
+  };
   document.querySelectorAll('[data-annuler]').forEach((b) => b.onclick = async () => {
     if (!confirm('Annuler ce pointage ? Il ne comptera plus nulle part.')) return;
     const tr = b.closest('tr');
@@ -345,6 +364,7 @@ async function ongletEnvois() {
       <strong>${esc(date(x.jour))} · ${esc(x.heure)}–${esc(x.fin)}</strong>
       <span class="ch">${esc(x.ch)}</span> ${esc(x.client)} <span class="doux">${esc(x.chantier)}</span>
       ${x.ref ? `<span class="pastille">${esc(x.ref)}</span>` : ''}
+      ${d.ecriture && x.etat === 'prête' ? `<button class="btn" data-poser="${esc(x.id)}">Poser cette case</button>` : ''}
       ${x.blocages.length ? `<br><span class="doux">Bloquée : ${esc(x.blocages.join(' · '))}</span>` : ''}
       ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
       ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>` : ''}
@@ -364,6 +384,16 @@ async function ongletEnvois() {
         r.echecs.map((x) => x.id + ' — ' + x.erreur).join(' · ') : ''));
       afficher();
     } catch (e) { retour.textContent = e.message; }
+  });
+  document.querySelectorAll('[data-poser]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const r = await api('/api/interfast/envois', {method: 'POST', json: {semaine: vue.semaine, cases: [b.dataset.poser]}});
+        dire(r.posees.length ? 'Case posée : ' + r.posees[0].ref : 'Échec : ' + r.echecs.map((x) => x.erreur).join(' · '));
+        afficher();
+      } catch (e) { dire(e.message); b.disabled = false; }
+    };
   });
   bouton('relire', async () => {
     retour.textContent = 'Lecture des heures dans InterFast, une case à la fois (une à deux minutes)…';
