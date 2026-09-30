@@ -23,8 +23,7 @@
 # codes déjà posés ne sont jamais remplacés.
 set -eu
 
-ORGA=orga_b3f4776d-f719-4c57-afbb-628b175dff3a     # GROUP ALMA, pas l'espace personnel
-REGION=par
+. "$(dirname "$0")/clever.conf"                    # ORGA, REGION, APP_VIP : une seule copie
 QUI=${1:-vip}
 case "$QUI" in
   vip)  NOM=rhi;      ENTREPRISE=VIP ;;
@@ -43,6 +42,9 @@ etape() { printf '\n── %s\n' "$1"; }
 etape "Application $NOM (Python, $REGION, GROUP ALMA)"
 if [ -f .clever.json ] && grep -q "\"alias\": *\"$NOM\"" .clever.json; then
   echo "déjà liée ici : rien à créer"
+elif [ "$QUI" = vip ] && [ -n "${APP_VIP:-}" ]; then
+  # Elle existe déjà (créée à la console) : la relier, surtout pas en créer une seconde.
+  "$CLEVER" link "$APP_VIP" --org "$ORGA" --alias "$NOM"
 else
   "$CLEVER" create --type python --org "$ORGA" --region "$REGION" --alias "$NOM" "$NOM"
 fi

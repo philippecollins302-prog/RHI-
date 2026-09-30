@@ -143,10 +143,12 @@ async function rafraichir() {
   dessiner();
 }
 
-// Les motifs, au cas où l'appareil n'aurait jamais reçu de menu.
+// Les motifs, au cas où l'appareil n'aurait jamais reçu de menu. COPIE de
+// base.MOTIFS, tenue identique par banc-ecran.
 const MOTIFS_SECOURS = [{code: 'ATTENTE_MATIERE', libelle: 'Attente matière / plans'},
   {code: 'RANGEMENT', libelle: 'Rangement · nettoyage'}, {code: 'PANNE', libelle: 'Panne machine'},
-  {code: 'TRAJET', libelle: 'Trajet · dépôt'}, {code: 'AUTRE', libelle: 'Autre (à préciser au bureau)'}];
+  {code: 'ENTRETIEN', libelle: 'Entretien machine'}, {code: 'TRAJET', libelle: 'Trajet · dépôt'},
+  {code: 'FORMATION', libelle: 'Formation'}, {code: 'AUTRE', libelle: 'Autre (à préciser au bureau)'}];
 
 // ── La file des gestes ──
 function enAttente() { return lireJson('rhi.file', []); }

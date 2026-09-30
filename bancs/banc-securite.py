@@ -59,7 +59,11 @@ r = c.get("/api/rhi", headers={"X-RHI-Code": "court"})
 verif(r.status_code == 503 and "trop court" in r.json()["detail"], "production : code bureau de 12 caractères au moins")
 s = c.get("/api/sante").json()
 verif(s["codes"] == "à régler" and s["pret"] is False, "la santé publique dit que les codes sont à régler")
-verif(set(s) == {"ok", "heure", "pret", "codes"}, "et rien d'autre : ni clé, ni courrier, ni chemin")
+verif(set(s) == {"ok", "heure", "pret", "codes", "version"}, "et rien d'autre : ni clé, ni courrier, ni chemin")
+os.environ["COMMIT_ID"] = "abc1234"
+verif(c.get("/api/sante").json()["version"] == "abc1234", "la santé dit quel commit tourne (COMMIT_ID de Clever)")
+os.environ.pop("COMMIT_ID")
+verif(c.get("/api/sante").json()["version"] == "inconnue", "sans COMMIT_ID : « inconnue », jamais un commit inventé")
 
 BUREAU = "un-code-bureau-long"
 codes(terrain="atelier", bureau=BUREAU, prod=True)

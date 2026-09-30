@@ -273,7 +273,16 @@ def sante(c=Depends(db)):
     e = _etat(c)
     pret = (e["codes_acces"] == "ok" and e["base"]["journal"] == "delete" and e["base"]["inscriptible"]
             and (e["base"]["dans_donnees"] or not en_production()))
-    return {"ok": True, "heure": e["heure"], "pret": pret, "codes": "ok" if e["codes_acces"] == "ok" else "à régler"}
+    return {"ok": True, "heure": e["heure"], "pret": pret, "codes": "ok" if e["codes_acces"] == "ok" else "à régler",
+            "version": version()}
+
+
+def version() -> str:
+    """Le commit qui tourne. Clever pose COMMIT_ID au déploiement ; la chaîne
+    compare cette valeur au commit qu'elle vient de pousser. Un déploiement
+    « réussi » qui sert encore l'ancien code (Ali Baba, 01/09/2026 : cinq
+    fois) se voit ici. Le dépôt est public : le commit n'apprend rien."""
+    return os.getenv("COMMIT_ID") or os.getenv("RHI_VERSION") or "inconnue"
 
 
 @app.get("/api/sante/detail", dependencies=[Depends(acces_bureau)])
@@ -699,7 +708,9 @@ class Validation(BaseModel):
 @app.post("/api/validations", dependencies=[Depends(acces_bureau)])
 def api_valider(v: Validation, c=Depends(db)):
     try:
-        return base.valider(c, v.personne.upper(), _lundi(v.semaine), v.qui)
+        # L'heure de l'application, pas celle du système : le banc truque la
+        # première, et un tampon pris sur la seconde changeait avec le jour réel.
+        return base.valider(c, v.personne.upper(), _lundi(v.semaine), v.qui, maintenant())
     except ValueError as e:
         raise HTTPException(409, str(e))
 

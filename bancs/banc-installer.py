@@ -24,6 +24,7 @@ case "$1 $2" in
   "env --alias") cat {etat} ;;
   "addon create") echo "BUCKET_HOST=bucket-123-fsbucket.services.clever-cloud.com" >> {etat} ;;
   "create --type") printf '{{"apps": [{{"alias": "%s"}}]}}' "$(echo "$*" | sed 's/.* //')" > .clever.json ;;
+  link*) printf '{{"apps": [{{"alias": "%s"}}]}}' "$(echo "$*" | sed 's/.*--alias //')" > .clever.json ;;
 esac
 """)
 faux.chmod(0o755)
@@ -38,8 +39,9 @@ def installer(*args):
 r = installer()
 verif(r.returncode == 0, f"première installation : {r.stderr}")
 appels = journal.read_text()
-verif("create --type python --org orga_b3f4776d-f719-4c57-afbb-628b175dff3a --region par" in appels,
-      "l'application naît dans GROUP ALMA, à Paris — pas dans l'espace personnel")
+verif("link app_a5509cc0-71a5-49d4-b201-ca1941713f22 --org orga_b3f4776d-f719-4c57-afbb-628b175dff3a" in appels
+      and "create --type" not in appels,
+      "VIP existe déjà (console, 29/09) : reliée, surtout pas recréée en double")
 verif("--min-instances 1 --max-instances 1" in appels, "une seule instance")
 verif("addon create fs-bucket rhi-donnees" in appels and "--link rhi" in appels, "le bucket, relié")
 variables = dict(l.split("=", 1) for l in etat.read_text().splitlines())
@@ -64,6 +66,11 @@ verif(v2["RHI_CODE_TERRAIN"] == t and v2["RHI_CODE_BUREAU"] == b and t not in r.
       "relancé : les codes connus des tablettes sont gardés")
 
 verif(installer("menuiserie").returncode == 2, "entreprise inconnue : refusé")
+(tmp / ".clever.json").unlink()
+r = installer("alfa")
+verif(r.returncode == 0 and "create --type python --org orga_b3f4776d-f719-4c57-afbb-628b175dff3a --region par"
+      in journal.read_text() and "RHI_ENTREPRISE=ALFA" in etat.read_text(),
+      f"Alfa n'existe pas encore : créée dans GROUP ALMA, à Paris — pas dans l'espace personnel {r.stderr}")
 r = subprocess.run(["sh", str(RACINE / "outils/clever-installer.sh")], capture_output=True, text=True,
                    env=dict(env, CLEVER="clever-absent-du-poste"))
 verif(r.returncode == 1 and "npm i -g clever-tools" in r.stderr, "sans clever-tools : on dit comment l'avoir")

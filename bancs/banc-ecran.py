@@ -62,4 +62,13 @@ for geste in ("J'arrête", "Valider la semaine", "Télécharger toute la base", 
           f"mode d'emploi : « {geste} » existe à l'écran")
 verif("Rien n'y est envoyé" in guide, "le guide dit que l'envoi vers InterFast n'est pas branché")
 
+# Les motifs de secours de la tablette (appareil qui n'a jamais reçu de menu)
+# sont une COPIE de base.MOTIFS : une copie dérive sans bruit. Le 30/09/2026,
+# ENTRETIEN et FORMATION manquaient à la tablette hors ligne depuis leur ajout.
+from rhi.base import MOTIFS  # noqa: E402
+terrain = (PUB / "terrain.js").read_text()
+secours = dict(re.findall(r"\{code: '(\w+)', libelle: '([^']*)'\}",
+                          terrain[terrain.index("MOTIFS_SECOURS = ["):terrain.index("];", terrain.index("MOTIFS_SECOURS = ["))]))
+verif(secours == MOTIFS, f"terrain.js MOTIFS_SECOURS ≠ base.MOTIFS : {set(MOTIFS) ^ set(secours) or 'libellés'}")
+
 fin("banc-ecran")

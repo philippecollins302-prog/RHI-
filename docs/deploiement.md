@@ -35,7 +35,13 @@ Déployer — **seulement quand Philippe dit « pousse »** :
 
     clever deploy --alias rhi
     clever activity --alias rhi        # OK ou FAIL : un push ne prouve rien
-    curl -s https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io/api/sante
+    sh outils/verifier-deploiement.sh "$(git rev-parse HEAD)"
+
+La vérification juge le site, pas le code de sortie : il doit servir CE
+commit (`"version"` de `/api/sante`, que Clever pose dans `COMMIT_ID`) et se
+dire prêt. Elle échoue fermée : 503, JSON illisible, ancien commit, pas de
+version, tout est rouge, avec le motif en tête. Identifiant, organisation et
+adresse de l'application : `outils/clever.conf`, la seule copie.
 
 ## 0. En une commande (étapes 1 à 3)
 

@@ -457,7 +457,7 @@ def validation(db, personne: str, jour):
     return dict(r) if r else None
 
 
-def valider(db, personne: str, lundi: dt.date, par: str) -> dict:
+def valider(db, personne: str, lundi: dt.date, par: str, le: dt.datetime | None = None) -> dict:
     """Le bureau valide le RHI d'une personne pour une semaine.
 
     Refusé s'il reste un pointage ouvert : on ne valide pas une semaine
@@ -473,7 +473,7 @@ def valider(db, personne: str, lundi: dt.date, par: str) -> dict:
     with db:
         db.execute("""INSERT INTO validations VALUES (?,?,?,?)
                       ON CONFLICT(personne, lundi) DO UPDATE SET par=excluded.par, le=excluded.le""",
-                   (personne, lundi.isoformat(), par, _iso(maintenant())))
+                   (personne, lundi.isoformat(), par, _iso(le or maintenant())))
     return validation(db, personne, lundi)
 
 
@@ -854,7 +854,7 @@ def valider_tout(db, lundi: dt.date, par: str, a: dt.datetime) -> dict:
             raisons.append("journée au planning sans pointage")
         if not raisons:
             try:
-                valider(db, p["nom"], lundi, par)
+                valider(db, p["nom"], lundi, par, a)
                 valides.append(p["nom"])
                 continue
             except ValueError as e:
