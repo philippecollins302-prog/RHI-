@@ -142,6 +142,21 @@ r, appels, _ = lancer("nettoyer", apres)
 verif("Rien à nettoyer" in r.stdout and not any(a["argv"][0] == "restart" for a in appels),
       "rien à faire : pas de redémarrage pour rien")
 
+# ── Codes réglés mais refusés par le site : dire la règle, pas la valeur ──
+court = {ALIBABA: {}, RHI: {"RHI_CODE_TERRAIN": "piege-t", "RHI_CODE_BUREAU": "piege-b"}}
+r, _, _ = lancer("etat", court)
+verif("moins de 12 caractères" in r.stdout and "piege-b" not in r.stdout, f"code bureau trop court : dit : {r.stdout}")
+pareils = {ALIBABA: {}, RHI: {"RHI_CODE_TERRAIN": "piege-meme-code-long", "RHI_CODE_BUREAU": "piege-meme-code-long"}}
+r, _, _ = lancer("etat", pareils)
+verif("identiques" in r.stdout and "piege-meme" not in r.stdout, f"codes identiques : dit : {r.stdout}")
+bons = {ALIBABA: {}, RHI: {"RHI_CODE_TERRAIN": "piege-t", "RHI_CODE_BUREAU": "piege-bureau-long"}}
+r, _, _ = lancer("etat", bons)
+verif("codes d'accès" not in r.stdout, "des codes corrects : rien à redire")
+import re as _re  # noqa: E402
+verif(_re.search(r"^LONGUEUR_BUREAU = (\d+)", (RACINE / "app.py").read_text(), _re.M).group(1)
+      == _re.search(r"^LONGUEUR_BUREAU = (\d+)", (RACINE / "outils/telecommande.py").read_text(), _re.M).group(1),
+      "la télécommande et le site exigent la même longueur de code bureau")
+
 r, _, _ = lancer("detruire", apps)
 verif(r.returncode != 0, "geste inconnu : refusé")
 
