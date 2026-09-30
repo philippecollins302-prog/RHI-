@@ -4,7 +4,8 @@ const JOURS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const vue = {onglet: lire('rhi.onglet', 'rhi'), semaine: '', personne: ''};
 
 fetch('/api/config').then((r) => r.json()).then((c) => {
-  $('#titre-bureau').textContent = 'RHI · Bureau — ' + c.nom;
+  $('#societe').textContent = c.nom;
+  document.title = 'RHI · Bureau — ' + c.nom;
 }).catch(() => { /* le titre générique suffit */ });
 
 function lundiDe(d) {
@@ -44,6 +45,8 @@ function brancherSemaine() {
 async function afficher() {
   document.querySelectorAll('[data-onglet]').forEach((b) =>
     b.classList.toggle('actif', b.dataset.onglet === vue.onglet));
+  const actif = [...document.querySelectorAll('[data-onglet]')].find((b) => b.dataset.onglet === vue.onglet);
+  if (actif) $('#titre-page').textContent = actif.lastChild.textContent;
   $('#vue').innerHTML = '<p class="doux">Chargement…</p>';
   try {
     await ({chantiers: ongletChantiers, rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,

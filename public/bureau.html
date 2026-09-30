@@ -6,28 +6,34 @@
 <title>RHI · Bureau</title>
 <link rel="stylesheet" href="app.css">
 </head>
-<body>
-<header><h1 id="titre-bureau">RHI · Bureau</h1><a href="mode-emploi.html" style="color:#fff">Mode d'emploi</a></header>
-<main>
-  <!-- Deux sujets à ne pas mélanger (Alexis, 30/09/2026) : le pointage des
-       heures, et le contrôle des plannings. -->
-  <nav id="onglets">
-    <span class="groupe">Heures</span>
-    <button data-onglet="chantiers">Mes chantiers</button>
-    <button data-onglet="rhi">RHI de la semaine</button>
-    <button data-onglet="verifier">À vérifier</button>
-    <button data-onglet="affaires">Point d'affaire</button>
-    <button data-onglet="direct">En ce moment</button>
-    <button data-onglet="personnes">Personnes</button>
-    <button data-onglet="envois">Vers InterFast</button>
-  </nav>
-  <nav>
-    <span class="groupe">Plannings</span>
-    <button data-onglet="marche">Marche en avant</button>
-    <button data-onglet="plannings">Déposer les plannings</button>
-  </nav>
-  <div id="vue"></div>
-</main>
+<body class="bureau">
+<div class="app">
+  <!-- Une seule barre : en haut sur téléphone, à gauche sur PC (dessin de
+       Boost AO, teinte VIP Plus). Deux sujets à ne pas mélanger (Alexis,
+       30/09/2026) : le pointage des heures, et le contrôle des plannings. -->
+  <aside class="lateral">
+    <div class="logo"><span class="marque">VP</span>
+      <span><b>RHI · Bureau</b><small id="societe">Relevé hebdomadaire</small></span></div>
+    <nav class="onglets" id="onglets">
+      <span class="groupe">Heures</span>
+      <button data-onglet="chantiers"><i>🏗</i>Mes chantiers</button>
+      <button data-onglet="rhi"><i>📋</i>RHI de la semaine</button>
+      <button data-onglet="verifier"><i>⚠️</i>À vérifier</button>
+      <button data-onglet="affaires"><i>📊</i>Point d'affaire</button>
+      <button data-onglet="direct"><i>⏱</i>En ce moment</button>
+      <button data-onglet="personnes"><i>👥</i>Personnes</button>
+      <button data-onglet="envois"><i>↗</i>Vers InterFast</button>
+      <span class="groupe">Plannings</span>
+      <button data-onglet="marche"><i>✉</i>Marche en avant</button>
+      <button data-onglet="plannings"><i>📅</i>Déposer les plannings</button>
+    </nav>
+    <div class="bas"><a href="mode-emploi.html">📖 Mode d'emploi</a></div>
+  </aside>
+  <main>
+    <div class="titre-pc"><h1 id="titre-page">RHI · Bureau</h1></div>
+    <div id="vue"></div>
+  </main>
+</div>
 <div class="message" id="message"></div>
 <script src="commun.js"></script>
 <script src="bureau.js"></script>

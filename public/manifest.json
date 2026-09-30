@@ -3,7 +3,7 @@
   "short_name": "RHI",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F4F5F2",
-  "theme_color": "#1E6F4F",
+  "background_color": "#f4f3f0",
+  "theme_color": "#591A26",
   "lang": "fr"
 }
