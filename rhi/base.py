@@ -27,15 +27,45 @@ DUREE_SUSPECTE_H = 10
 # Le temps hors affaire. Mesurer le temps perdu fait partie de la demande
 # (« on verra le temps réel de fab… et le temps perdu ») : ces motifs sont
 # pointés comme une affaire, sans CH.
+#
+# La liste est celle d'Alexis (30/09/2026) : quatre motifs, tous imputés au
+# CH des frais généraux dans InterFast, « Autre » à valider par le
+# contrôleur. Le trajet n'en est plus un : il compte dans le chantier (on
+# pointe au départ, le retour du soir va sur le dernier chantier). Attente
+# matière et panne ne sont pas retenues.
 MOTIFS = {
-    "ATTENTE_MATIERE": "Attente matière / plans",
-    "RANGEMENT": "Rangement · nettoyage",
-    "PANNE": "Panne machine",
-    "ENTRETIEN": "Entretien machine",
-    "TRAJET": "Trajet · dépôt",
+    "RANGEMENT": "Rangement (atelier)",
+    "ENTRETIEN": "Entretien machine (atelier)",
     "FORMATION": "Formation",
-    "AUTRE": "Autre (à préciser au bureau)",
+    "AUTRE": "Autre (à valider)",
 }
+# Les motifs retirés restent lisibles dans l'historique : un RHI déjà
+# pointé ne perd pas son libellé. Ils ne sont plus proposés, et un geste
+# qui en porte encore un (tablette restée hors ligne) tombe sur « Autre ».
+MOTIFS_RETIRES = {
+    "ATTENTE_MATIERE": "Attente matière / plans",
+    "PANNE": "Panne machine",
+    "TRAJET": "Trajet · dépôt",
+}
+LIBELLES_MOTIFS = {**MOTIFS_RETIRES, **MOTIFS}
+
+
+def ch_frais_generaux() -> str:
+    """Le CH InterFast où tombe le temps hors affaire (« CH FG SER »).
+
+    Réglable par RHI_CH_FRAIS_GENERAUX ; par défaut, celui de VIP Plus donné
+    par Alexis le 30/09/2026. Alfa n'en a pas encore : vide, le hors affaire
+    reste en dehors d'InterFast, comme avant."""
+    v = os.getenv("RHI_CH_FRAIS_GENERAUX")
+    if v is not None:
+        return v.strip().upper()
+    return {"VIP": "CH00081"}.get(os.getenv("RHI_ENTREPRISE", "VIP").strip().upper(), "")
+
+
+def _motif(motif):
+    """Un motif proposé, ou « Autre » : jamais un code inconnu en base."""
+    return motif if motif in MOTIFS else "AUTRE"
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS personnes (
@@ -627,8 +657,8 @@ def demarrer(db, noms: list, quand: dt.datetime, ch=None, motif=None,
         raise ValueError("Personne à pointer")
     if not ch and not motif:
         raise ValueError("Un CH ou un motif")
-    if motif and motif not in MOTIFS:
-        motif = "AUTRE"
+    if motif:
+        motif = _motif(motif)
     # Le geste en direct n'est jamais bloqué, même dans une semaine validée
     # (banc-couts). Mais un geste REJOUÉ (hors ligne, arrivé en retard) ne
     # rouvre pas une semaine que le bureau a déjà relue — revue de sécurité
@@ -692,6 +722,8 @@ def ajouter(db, personne, debut, fin, ch=None, motif=None, libelle="", qui="bure
     """Saisie a posteriori au bureau (feuille papier, oubli de la tablette)."""
     if not ch and not motif:
         raise ValueError("Un CH ou un motif")
+    if motif:
+        motif = _motif(motif)
     # Une durée nulle cachait une journée oubliée sans rien y mettre (un clic
     # sur « Ajouter » sans toucher aux heures), et la validation de masse la
     # laissait alors passer.
@@ -734,7 +766,7 @@ def _alertes(p: dict, a: dt.datetime) -> list:
     if p["fin"] and p["fin"][:10] != p["debut"][:10]:
         alertes.append("Passe minuit")
     if not p["ch"] and p["motif"] == "AUTRE":
-        alertes.append("Motif « autre » à préciser")
+        alertes.append("Motif « autre » à valider")
     if p.get("recu"):
         alertes.append("Pointé hors ligne, reçu le %s à %s" % (p["recu"][8:10] + "/" + p["recu"][5:7],
                                                               p["recu"][11:16]))
@@ -760,13 +792,16 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
         cle = p["ch"] or ("HORS·" + (p["motif"] or "AUTRE"))
         l = lignes.setdefault(cle, {
             "ch": p["ch"], "motif": p["motif"],
-            "libelle": p["chantier"] or MOTIFS.get(p["motif"] or "", "") or p["libelle"],
+            "libelle": p["chantier"] or LIBELLES_MOTIFS.get(p["motif"] or "", "") or p["libelle"],
+            # Où ces heures tombent dans InterFast : le CH des frais généraux
+            # pour le hors affaire (vide s'il n'est pas réglé).
+            "ch_impute": p["ch"] or ch_frais_generaux() or None,
             "jours": [0.0] * 7, "total": 0.0})
         l["jours"][jour] += h
         l["total"] += h
         p["heures"] = round(h, 2)
         p["alertes"] = _alertes(p, a)
-        p["motif_libelle"] = MOTIFS.get(p["motif"] or "", "")
+        p["motif_libelle"] = LIBELLES_MOTIFS.get(p["motif"] or "", "")
         detail.append(p)
     rangees = sorted(lignes.values(), key=lambda l: (l["ch"] is None, -l["total"]))
     for l in rangees:
@@ -809,7 +844,7 @@ def oublis(db, lundi: dt.date, a: dt.datetime) -> list:
 
 def temps_perdu(db, lundi: dt.date, a: dt.datetime) -> dict:
     """Le temps hors affaire de la semaine, par motif : ce que la réunion
-    voulait mesurer (« attente matière », pannes…), au lieu de le deviner."""
+    voulait mesurer (rangement, entretien…), au lieu de le deviner."""
     fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
     par_motif, par_personne, total = {}, {}, 0.0
     for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND debut >= ? AND debut < ?""",
@@ -829,7 +864,7 @@ def temps_perdu(db, lundi: dt.date, a: dt.datetime) -> dict:
     return {"total": round(total, 2), "hors_affaire": round(hors, 2),
             "part": round(100 * hors / total) if total else 0,
             # Moins d'une minute : un doigt qui a glissé, pas du temps perdu.
-            "motifs": [{"code": k, "libelle": MOTIFS.get(k, k), "heures": round(v, 2),
+            "motifs": [{"code": k, "libelle": LIBELLES_MOTIFS.get(k, k), "heures": round(v, 2),
                         "qui": sorted(((n, round(d[k], 2)) for n, d in par_personne.items()
                                        if d.get(k, 0) >= 1 / 60), key=lambda x: -x[1])}
                        for k, v in sorted(par_motif.items(), key=lambda x: -x[1]) if v >= 1 / 60]}
@@ -1024,7 +1059,8 @@ def analyser_ch(db, ch: str, pose: dt.date, jour: dt.date, libelle: str = "") ->
     sortie = []
     if not fab_lignes and not backlog and not etudes and not par_nom:
         return [_constat("rouge" if j <= URGENT_J else "orange", f"{ch}|aucune-trace",
-                         "Aucune trace amont : ni plan de charge, ni planning FAB, ni BET")]
+                         "Aucune trace amont : ni plan de charge, ni planning FAB, ni BET "
+                         "(approvisionnement extérieur ? à vérifier)")]
     if cherches:
         f2 = [x for x in fab_lignes if mots(x[1]) & cherches]
         b2 = [l for l in backlog + par_nom if mots(l["designation"]) & cherches]
@@ -1252,10 +1288,16 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
         "SELECT * FROM cases_interfast WHERE jour >= ? AND jour < ?", (lundi.isoformat(), fin_sem.isoformat()))}
     recues = {(r["ref"], r["user_id"]): dict(r) for r in db.execute("SELECT * FROM heures_interfast")}
     cases = {}
-    for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND ch IS NOT NULL
+    # Le hors affaire part sur le CH des frais généraux (Alexis, 30/09/2026) ;
+    # sans ce CH réglé, il reste en dehors d'InterFast.
+    fg = ch_frais_generaux()
+    for r in db.execute("""SELECT * FROM pointages WHERE annule=0 AND (ch IS NOT NULL OR ? != '')
                            AND fin IS NOT NULL AND debut >= ? AND debut < ? ORDER BY debut""",
-                        (lundi.isoformat(), fin_sem.isoformat())):
+                        (fg, lundi.isoformat(), fin_sem.isoformat())):
         p = dict(r)
+        if not p["ch"]:
+            p["ch"] = fg
+            p["libelle"] = p["libelle"] or LIBELLES_MOTIFS.get(p["motif"] or "", "hors affaire")
         jour = p["debut"][:10]
         c = cases.setdefault((p["ch"], jour), {"ch": p["ch"], "jour": jour, "gens": {}, "libelles": []})
         g = c["gens"].setdefault(p["personne"], {"personne": p["personne"], "debut": None, "fin": None,

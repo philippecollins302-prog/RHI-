@@ -395,7 +395,7 @@ def api_rhi_csv(semaine: str | None = None, c=Depends(db)):
         r = base.rhi(c, p["nom"], lundi, maintenant())
         v = r["validee"]
         for l in r["lignes"]:
-            w.writerow([cellule(p["nom"]), l["ch"] or "", cellule(l["libelle"]),
+            w.writerow([cellule(p["nom"]), l["ch"] or l["ch_impute"] or "", cellule(l["libelle"]),
                         *[str(x).replace(".", ",") for x in l["jours"]],
                         str(l["total"]).replace(".", ","),
                         cellule(f"{v['par']} le {v['le'][:10]}") if v else ""])

@@ -75,3 +75,40 @@ questions. Une ligne par réponse suffit.
     d'une pose de Courreau — même pièce ou pas ?
 
 Merci !
+
+---
+
+## Réponses (deux mails, 30/09/2026)
+
+*Sans noms de personnes : le dépôt est public. La liste nominative (qui
+pointe, chargés d'affaires, RH) reste dans les mails et dans l'onglet
+Personnes de RHI.*
+
+| Sujet | Réponse | Dans RHI |
+|---|---|---|
+| Qui pointe à l'atelier | Quatre permanents, plus le plieur, qui pointe sur CH | — |
+| Tablettes | **Cinq** à l'atelier (le plieur compris). Wi-Fi à vérifier : le réseau passe mal au BET | à l'achat |
+| Intérimaires | Pointent sous leur nom sur les tablettes des permanents ; les RH ajoutent les noms (qui exactement : à trancher chez eux) | à faire |
+| Pose | Chaque poseur fait son RHI aujourd'hui ; demain, le téléphone du chef d'équipe pour lui et son binôme | déjà ainsi |
+| Précision | Au CH, pas à l'ouvrage (l'ouvrage, plus tard, pour le retour d'expérience du chiffrage) | déjà ainsi |
+| Pliage, débit, plasma | Toujours sur un CH | à faire |
+| Motifs | Rangement, entretien machine, formation, autre (à valider) — tous sur le CH des frais généraux | **fait** (`banc-motifs`) |
+| CH des frais généraux | `CH00081` (« CH FG SER ») | **fait** (`RHI_CH_FRAIS_GENERAUX`) |
+| Trajet | Compté dans le chantier : départ pointé, retour du soir sur le dernier chantier | **fait** (plus un motif) |
+| Sans numéro d'affaire | Un « CH DIVERS », à créer dans InterFast, avec transfert des heures vers le bon CH | à faire |
+| Validation | Chaque chargé d'affaires vérifie ses chantiers et la cohérence avec le planning ; le responsable de BU vérifie le planning final général | à faire |
+| Chargés d'affaires | Normalement renseignés sur chaque chantier dans InterFast (à vérifier) ; trois noms sinon | à lire dans InterFast |
+| Point d'affaire | InterFast doit porter toutes les heures engagées ; le chargé d'affaires estime le reste à faire ; engagé + reste face au chiffrage = dérapage | à faire |
+| Taux | Un taux atelier et un taux pose, bibliothèque InterFast ; **ce sont les heures qui comptent**, pas le taux | le coût reste secondaire |
+| Affaire de test InterFast | `CH00066` | pour l'essai d'écriture |
+| Synthèse du lundi | À Alexis seulement (`RHI_MARCHE_A`) | réglage Clever |
+| Pose d'Assas | Approvisionnement extérieur confirmé : une pose sans trace amont le suggère désormais | **fait** |
+| Lunas / MBS | Stock en avance de fabrication, en attente du GO de la maîtrise d'œuvre | — |
+| Planning TRAITEMENT (pièce dans la case) | « Rien à voir avec les RHI » | abandonné |
+
+**Deux sujets à ne pas mélanger**, dit-il : les **RHI** (le pointage) et le
+**contrôle des plannings** (la marche en avant). Les deux vivent dans RHI,
+mais ils se présentent séparément.
+
+Reste sans réponse : la date de démarrage et les quinze minutes de
+démonstration aux gars.
