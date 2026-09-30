@@ -174,7 +174,7 @@ CREATE INDEX IF NOT EXISTS restes_ch ON restes(ch, le);
 CREATE TABLE IF NOT EXISTS planning (
   personne TEXT NOT NULL,
   jour TEXT NOT NULL,
-  ch TEXT,                         -- NULL : tâche sans CH (pliage, débit…)
+  ch TEXT,                         -- NULL : hors affaire, un motif (rangement, entretien…)
   libelle TEXT NOT NULL DEFAULT '',
   origine TEXT NOT NULL            -- 'atelier' | 'pose'
 );
