@@ -35,7 +35,7 @@ verif("`<option value=\"${esc(u.id)}\"" in bureau and "${esc(u.prenom)} ${esc(u.
 # Chaque onglet appelé par afficher() doit être déclaré AU NIVEAU DU FICHIER :
 # le 29/09/2026, ongletPersonnes s'était glissé dans un gestionnaire de clic
 # et l'onglet RHI plantait (« ongletPersonnes is not defined »).
-carte = re.search(r"\(\{(rhi: .*?)\}\[vue\.onglet\]", bureau, re.S).group(1)
+carte = re.search(r"\(\{(\w+: .*?)\}\[vue\.onglet\]", bureau, re.S).group(1)
 for fonction in re.findall(r":\s*(\w+)", carte):
     verif(re.search(rf"^async function {fonction}\(", bureau, re.M),
           f"bureau.js : {fonction} doit être déclarée au niveau du fichier")

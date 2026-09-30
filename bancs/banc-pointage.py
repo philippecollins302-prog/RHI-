@@ -202,6 +202,10 @@ p0 = c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]["po
 verif(any(x["motif_libelle"] == "Formation" for x in p0), "le motif en clair, pour la feuille imprimée")
 
 # ── Valider d'un geste ce qui n'a rien à regarder ──
+# Premier étage d'abord : chaque chargé d'affaires contrôle ses chantiers.
+for ch, qui in (("CH00901", "AA"), ("CH00902", "BB")):
+    verif(c.post("/api/controles", json={"ch": ch, "semaine": "2026-09-28", "qui": qui}).status_code == 200,
+          f"{qui} contrôle {ch}")
 r = c.post("/api/validations/toutes", json={"semaine": "2026-09-28", "qui": "Alexis"}).json()
 verif(r["valides"] == ["JEAN", "MARC"], f"les relevés propres sont validés : {r}")
 verif(r["ecartes"] == [{"personne": "LUC", "raisons": ["journée au planning sans pointage"]},

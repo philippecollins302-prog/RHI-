@@ -9,15 +9,22 @@
 <body>
 <header><h1 id="titre-bureau">RHI · Bureau</h1><a href="mode-emploi.html" style="color:#fff">Mode d'emploi</a></header>
 <main>
+  <!-- Deux sujets à ne pas mélanger (Alexis, 30/09/2026) : le pointage des
+       heures, et le contrôle des plannings. -->
   <nav id="onglets">
+    <span class="groupe">Heures</span>
+    <button data-onglet="chantiers">Mes chantiers</button>
     <button data-onglet="rhi">RHI de la semaine</button>
     <button data-onglet="verifier">À vérifier</button>
     <button data-onglet="affaires">Point d'affaire</button>
-    <button data-onglet="marche">Marche en avant</button>
     <button data-onglet="direct">En ce moment</button>
     <button data-onglet="personnes">Personnes</button>
     <button data-onglet="envois">Vers InterFast</button>
-    <button data-onglet="plannings">Plannings</button>
+  </nav>
+  <nav>
+    <span class="groupe">Plannings</span>
+    <button data-onglet="marche">Marche en avant</button>
+    <button data-onglet="plannings">Déposer les plannings</button>
   </nav>
   <div id="vue"></div>
 </main>

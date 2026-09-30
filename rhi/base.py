@@ -145,6 +145,16 @@ CREATE TABLE IF NOT EXISTS lignes_prevues (
   designation TEXT NOT NULL,
   heures REAL
 );
+-- Premier étage de la validation (Alexis, 30/09/2026) : le chargé
+-- d'affaires contrôle ses chantiers, semaine par semaine ; le responsable
+-- de BU valide ensuite les RHI (table validations).
+CREATE TABLE IF NOT EXISTS controles_ch (
+  ch TEXT NOT NULL,
+  lundi TEXT NOT NULL,
+  par TEXT NOT NULL,
+  le TEXT NOT NULL,
+  PRIMARY KEY (ch, lundi)
+);
 CREATE TABLE IF NOT EXISTS planning (
   personne TEXT NOT NULL,
   jour TEXT NOT NULL,
@@ -517,7 +527,10 @@ def personnes_detail(db) -> list:
 # ═══════════════════════ VALIDATION HEBDOMADAIRE ═══════════════════════
 
 def _lundi_de(jour) -> str:
-    d = jour if isinstance(jour, dt.date) else dt.date.fromisoformat(str(jour)[:10])
+    # Un datetime EST un date : sans ce .date(), le lundi gardait son heure
+    # (« 2026-09-28T09:00:00 ») et ne retrouvait aucune ligne.
+    d = (jour.date() if isinstance(jour, dt.datetime) else jour if isinstance(jour, dt.date)
+         else dt.date.fromisoformat(str(jour)[:10]))
     return (d - dt.timedelta(days=d.weekday())).isoformat()
 
 
@@ -570,6 +583,98 @@ def _verifier_ouverte(db, personne, *jours):
         if j and validation(db, personne, j):
             raise SemaineValidee(f"Semaine du {_lundi_de(j)} validée pour {personne} : "
                                  "la dévalider avant de corriger")
+
+
+def _rouvrir_controles(db, jour, *chs):
+    """Des heures bougent sur un chantier déjà contrôlé : le contrôle ne dit
+    plus vrai, il tombe. Le chargé d'affaires le refera sur ce qui est là."""
+    for ch in {c for c in chs if c}:
+        db.execute("DELETE FROM controles_ch WHERE ch=? AND lundi=?", (ch, _lundi_de(jour)))
+
+
+def controle(db, ch: str, jour) -> dict | None:
+    r = db.execute("SELECT par, le FROM controles_ch WHERE ch=? AND lundi=?", (ch, _lundi_de(jour))).fetchone()
+    return dict(r) if r else None
+
+
+def chantiers_semaine(db, lundi: dt.date, a: dt.datetime, conduc: str | None = None) -> dict:
+    """Ce que le chargé d'affaires contrôle : chacun de ses chantiers pointés
+    dans la semaine, personne par personne et jour par jour, face au planning.
+
+    Les écarts au planning sont dits, pas jugés : pointé un jour où l'on
+    n'était pas prévu (le planning a toujours un temps de retard), ou prévu
+    sans rien pointer sur ce chantier."""
+    fin_sem = lundi + dt.timedelta(days=7)
+    sortie = {}
+    for r in db.execute("""SELECT p.*, COALESCE(a.chantier,'') AS chantier, COALESCE(a.conduc,'') AS conduc
+                           FROM pointages p LEFT JOIN affaires a ON a.ch = p.ch
+                           WHERE p.annule=0 AND p.ch IS NOT NULL AND p.debut >= ? AND p.debut < ?
+                           ORDER BY p.ch, p.personne""", (lundi.isoformat(), fin_sem.isoformat())):
+        p = dict(r)
+        c = sortie.setdefault(p["ch"], {"ch": p["ch"], "chantier": p["chantier"], "conduc": p["conduc"],
+                                        "gens": {}, "total": 0.0, "ouverts": 0})
+        g = c["gens"].setdefault(p["personne"], {"personne": p["personne"], "jours": [0.0] * 7, "total": 0.0})
+        h = _heures(p, a)
+        j = dt.date.fromisoformat(p["debut"][:10]).weekday()
+        g["jours"][j] += h
+        g["total"] += h
+        c["total"] += h
+        c["ouverts"] += p["fin"] is None
+    prevu = {}
+    for r in db.execute("""SELECT DISTINCT personne, jour, ch FROM planning
+                           WHERE ch IS NOT NULL AND jour >= ? AND jour < ?""",
+                        (lundi.isoformat(), fin_sem.isoformat())):
+        prevu.setdefault(r["ch"], set()).add((r["personne"], dt.date.fromisoformat(r["jour"]).weekday()))
+    liste = []
+    for c in sortie.values():
+        if conduc and c["conduc"] != conduc:
+            continue
+        pointe = {(n, j) for n, g in c["gens"].items() for j, h in enumerate(g["jours"]) if h >= 1 / 60}
+        attendu = prevu.get(c["ch"], set())
+        jours = lambda s: sorted(s, key=lambda x: (x[1], x[0]))  # noqa: E731
+        c["hors_planning"] = [{"personne": n, "jour": (lundi + dt.timedelta(days=j)).isoformat()}
+                              for n, j in jours(pointe - attendu)] if attendu else []
+        c["prevu_non_pointe"] = [{"personne": n, "jour": (lundi + dt.timedelta(days=j)).isoformat()}
+                                 for n, j in jours(attendu - pointe) if lundi + dt.timedelta(days=j) < a.date()]
+        c["gens"] = sorted(({**g, "jours": [round(x, 2) for x in g["jours"]], "total": round(g["total"], 2)}
+                            for g in c["gens"].values()), key=lambda g: g["personne"])
+        c["total"] = round(c["total"], 2)
+        c["controle"] = controle(db, c["ch"], lundi)
+        liste.append(c)
+    liste.sort(key=lambda c: (c["controle"] is not None, c["conduc"], c["ch"]))
+    tous = sorted({v["conduc"] for v in sortie.values() if v["conduc"]})
+    return {"lundi": lundi.isoformat(), "conducs": tous, "chantiers": liste,
+            "a_controler": sum(1 for c in liste if not c["controle"])}
+
+
+def controler_ch(db, ch: str, lundi: dt.date, par: str, le: dt.datetime) -> dict:
+    """Le chargé d'affaires atteste ses heures d'un chantier pour la semaine."""
+    ouverts = db.execute("""SELECT COUNT(*) FROM pointages WHERE ch=? AND annule=0 AND fin IS NULL
+                            AND debut >= ? AND debut < ?""",
+                         (ch, lundi.isoformat(), (lundi + dt.timedelta(days=7)).isoformat())).fetchone()[0]
+    if ouverts:
+        raise ValueError(f"{ch} a encore {ouverts} pointage(s) ouvert(s) cette semaine")
+    if not (par or "").strip():
+        raise ValueError("Qui contrôle ? (nom ou initiales)")
+    with db:
+        db.execute("""INSERT INTO controles_ch VALUES (?,?,?,?)
+                      ON CONFLICT(ch, lundi) DO UPDATE SET par=excluded.par, le=excluded.le""",
+                   (ch, lundi.isoformat(), par.strip(), _iso(le)))
+    return controle(db, ch, lundi)
+
+
+def decontroler_ch(db, ch: str, lundi: dt.date) -> None:
+    """Retirer un contrôle — pas sous un RHI déjà validé qui porte ce chantier :
+    l'étage du dessus s'appuie dessus, on le rouvre d'abord."""
+    fin_sem = (lundi + dt.timedelta(days=7)).isoformat()
+    qui = [r[0] for r in db.execute("""SELECT DISTINCT p.personne FROM pointages p
+                                       JOIN validations v ON v.personne = p.personne AND v.lundi = ?
+                                       WHERE p.ch=? AND p.annule=0 AND p.debut >= ? AND p.debut < ?""",
+                                    (lundi.isoformat(), ch, lundi.isoformat(), fin_sem))]
+    if qui:
+        raise ValueError(f"RHI déjà validé pour {', '.join(qui)} : le dévalider d'abord")
+    with db:
+        db.execute("DELETE FROM controles_ch WHERE ch=? AND lundi=?", (ch, lundi.isoformat()))
 
 
 # ═══════════════════════ CE QU'ON PROPOSE SUR LA TABLETTE ═══════════════════════
@@ -711,6 +816,7 @@ def demarrer(db, noms: list, quand: dt.datetime, ch=None, motif=None,
     ids = []
     with db:
         if ch:
+            _rouvrir_controles(db, quand, ch)
             db.execute("""INSERT INTO affaires(ch, chantier, source, maj)
                           VALUES (?, '', 'tablette', ?) ON CONFLICT(ch) DO NOTHING""",
                        (ch, _iso(quand)))
@@ -743,7 +849,7 @@ def corriger(db, pid: int, qui: str, **champs) -> dict:
     for k in ("debut", "fin"):
         if maj.get(k):
             maj[k] = _iso(dt.datetime.fromisoformat(maj[k]))
-    avant = db.execute("SELECT personne, debut, fin FROM pointages WHERE id=?", (pid,)).fetchone()
+    avant = db.execute("SELECT personne, debut, fin, ch FROM pointages WHERE id=?", (pid,)).fetchone()
     if not avant:
         raise KeyError(pid)
     debut, fin = maj.get("debut") or avant["debut"], maj.get("fin") or avant["fin"]
@@ -752,6 +858,9 @@ def corriger(db, pid: int, qui: str, **champs) -> dict:
     _verifier_ouverte(db, avant["personne"], avant["debut"], maj.get("debut"))
     maj["corrige"] = f"{qui} · {_iso(maintenant())}"
     with db:
+        _rouvrir_controles(db, avant["debut"], avant["ch"], maj.get("ch"))
+        if maj.get("debut"):
+            _rouvrir_controles(db, maj["debut"], maj.get("ch") or avant["ch"])
         n = db.execute(f"UPDATE pointages SET {', '.join(k + '=?' for k in maj)} WHERE id=?",
                        (*maj.values(), pid)).rowcount
     if not n:
@@ -772,6 +881,7 @@ def ajouter(db, personne, debut, fin, ch=None, motif=None, libelle="", qui="bure
         raise ValueError("La fin doit suivre le début")
     _verifier_ouverte(db, personne, debut)
     with db:
+        _rouvrir_controles(db, debut, ch)
         cur = db.execute("""INSERT INTO pointages(personne, ch, motif, libelle, debut, fin,
                             appareil, corrige) VALUES (?,?,?,?,?,?, 'bureau', ?)""",
                          (personne, ch, None if ch else motif, libelle,
@@ -848,6 +958,8 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
         detail.append(p)
     rangees = sorted(lignes.values(), key=lambda l: (l["ch"] is None, -l["total"]))
     for l in rangees:
+        l["controle"] = controle(db, l["ch"], lundi) if l["ch"] else None
+        l["conduc"] = (db.execute("SELECT conduc FROM affaires WHERE ch=?", (l["ch"],)).fetchone() or [""])[0] if l["ch"] else ""
         l["jours"] = [round(x, 2) for x in l["jours"]]
         l["total"] = round(l["total"], 2)
     par_jour = [round(sum(l["jours"][i] for l in rangees), 2) for i in range(7)]
@@ -930,6 +1042,11 @@ def valider_tout(db, lundi: dt.date, par: str, a: dt.datetime) -> dict:
         raisons = sorted({x for q in r["pointages"] for x in q["alertes"] if not x.startswith(INFORMATIVES)})
         if p["nom"] in sans_pointage:
             raisons.append("journée au planning sans pointage")
+        # Deux étages (Alexis, 30/09/2026) : un chantier qui a un chargé
+        # d'affaires attend son contrôle avant la validation du RHI.
+        for l in r["lignes"]:
+            if l["ch"] and l["conduc"] and not l["controle"]:
+                raisons.append(f"{l['ch']} pas encore contrôlé par {l['conduc']}")
         if not raisons:
             try:
                 valider(db, p["nom"], lundi, par, a)

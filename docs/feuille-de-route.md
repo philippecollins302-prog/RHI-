@@ -21,9 +21,10 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 - ~~Journal SQLite compatible avec le bucket réseau~~ — `delete`, pas `wal`.
 - Réponses d'Alexis (`docs/questions-alexis.md`, 30/09/2026) :
   ~~motifs sur le CH des frais généraux, trajet dans le chantier~~ (fait) ;
-  reste le CH DIVERS et le transfert d'heures, la validation par chargé
-  d'affaires puis par le responsable de BU, l'ajout d'intérimaires par les
-  RH, les tâches sans CH, et le reste à faire estimé au point d'affaire.
+  ~~CH DIVERS, ajout d'intérimaires~~ (fait, reste à créer le CH DIVERS dans
+  InterFast) ; ~~validation par chargé d'affaires puis par le responsable
+  de BU~~ (fait, `banc-controles`) ; reste le transfert d'heures, les tâches
+  sans CH, et le reste à faire estimé au point d'affaire.
 
 ## V1.2 — InterFast
 1. ~~Trouver les outils avec la vraie clé~~ — fait le 29/09/2026, voir
