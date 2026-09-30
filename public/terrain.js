@@ -234,6 +234,8 @@ function dessiner() {
       ${autres.map((a) => `<button class="gros chantier" data-ch="${esc(a.ch)}" data-libelle="">
         <span class="ch">${esc(a.ch)}</span><br>${esc(a.chantier || '—')}
         <small>${esc(a.client || '')}</small></button>`).join('')}
+      ${m.ch_divers ? `<button class="gros chantier" data-ch="${esc(m.ch_divers)}" data-libelle="CH DIVERS">
+        <span class="ch">${esc(m.ch_divers)}</span><br>Sans N° d'affaire<small>CH DIVERS : le bureau transférera</small></button>` : ''}
       ${chSaisi ? `<button class="gros chantier" data-ch="${esc(f.replace(/\s/g, ''))}" data-libelle="">
         <span class="ch">${esc(f)}</span><br>Pointer sur ce CH<small>Absent des plannings : le bureau vérifiera</small></button>` : ''}
     </div>

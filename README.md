@@ -45,6 +45,8 @@ planning ATE et le planning POSE SER. La tablette est sur
 | `RHI_DONNEES` | dossier de la base (`donnees/` par défaut ; `/donnees` sur Clever Cloud) |
 | `RHI_CODE_TERRAIN` | code des tablettes et téléphones |
 | `RHI_CODE_BUREAU` | code du bureau (voit tout) |
+| `RHI_CH_FRAIS_GENERAUX` | CH InterFast du hors affaire (défaut VIP : `CH00081`) |
+| `RHI_CH_DIVERS` | CH InterFast des interventions sans numéro d'affaire ; vide = pas proposé sur la tablette |
 | `RHI_COUT_HORAIRE` | taux horaire moyen (€/h) quand une personne n'a pas le sien |
 | `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |

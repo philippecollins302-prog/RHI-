@@ -62,6 +62,20 @@ def ch_frais_generaux() -> str:
     return {"VIP": "CH00081"}.get(os.getenv("RHI_ENTREPRISE", "VIP").strip().upper(), "")
 
 
+def ch_divers() -> str:
+    """Le CH des interventions sans numéro d'affaire (« CH DIVERS »).
+
+    Alexis, 30/09/2026 : à créer dans InterFast, avec la possibilité de
+    transférer ensuite les heures vers le bon CH. Tant que son numéro n'est
+    pas réglé (RHI_CH_DIVERS), la tablette ne le propose pas."""
+    return (os.getenv("RHI_CH_DIVERS") or "").strip().upper()
+
+
+# Les alertes qui informent sans rien dire de faux : elles n'empêchent pas la
+# validation d'un geste (valider_tout).
+INFORMATIVES = ("Pointé hors ligne", "CH DIVERS")
+
+
 def _motif(motif):
     """Un motif proposé, ou « Autre » : jamais un code inconnu en base."""
     return motif if motif in MOTIFS else "AUTRE"
@@ -233,7 +247,9 @@ AJOUTS = {
                  # Vendu HT : devis signés/payés dont le titre porte le CH (NULL = non trouvé).
                  ("vendu_ht", "REAL"), ("devis_refs", "TEXT NOT NULL DEFAULT ''"), ("vendu_maj", "TEXT")],
     "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
-                  ("cout_interfast", "REAL"), ("cout_horaire", "REAL")],
+                  ("cout_interfast", "REAL"), ("cout_horaire", "REAL"),
+                  # Ajouté au bureau (RH), pas venu d'un planning : un intérimaire.
+                  ("interim", "INTEGER NOT NULL DEFAULT 0")],
     # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
     # ligne, rejoué au retour du réseau.
     "pointages": [("recu", "TEXT")],
@@ -467,6 +483,30 @@ def couts(db) -> dict:
     return sortie
 
 
+NOM_MAX = 40
+
+
+def ajouter_personne(db, nom: str, equipe: str, quand: dt.datetime) -> dict:
+    """Le bureau (les RH) ajoute quelqu'un aux tablettes : un intérimaire.
+
+    Alexis, 30/09/2026 : les intérimaires pointent sous leur propre nom, sur
+    les tablettes des permanents, et ce sont les RH qui ajoutent les noms.
+    Un nom déjà connu mais désactivé est réactivé plutôt que doublé."""
+    nom = " ".join((nom or "").split()).upper()
+    if not nom or len(nom) > NOM_MAX:
+        raise ValueError(f"Un nom, de {NOM_MAX} caractères au plus")
+    if equipe not in ("atelier", "pose"):
+        raise ValueError("Équipe : atelier ou pose")
+    with db:
+        ancien = db.execute("SELECT * FROM personnes WHERE nom=?", (nom,)).fetchone()
+        if ancien:
+            db.execute("UPDATE personnes SET actif=1, equipe=? WHERE nom=?", (equipe, nom))
+        else:
+            db.execute("""INSERT INTO personnes(nom, equipe, actif, vu_le, interim)
+                          VALUES (?, ?, 1, ?, 1)""", (nom, equipe, _iso(quand)))
+    return dict(db.execute("SELECT * FROM personnes WHERE nom=?", (nom,)).fetchone()) | {"deja": bool(ancien)}
+
+
 def personnes_detail(db) -> list:
     """Toutes les personnes, actives ou non, avec ce que le bureau règle."""
     c = couts(db)
@@ -570,6 +610,7 @@ def menu(db, personne: str, jour: dt.date) -> dict:
     return {"planning": [p for p in du_jour if p["ch"]],
             "taches_sans_ch": [p["libelle"] for p in du_jour if not p["ch"]],
             "affaires": toutes,
+            "ch_divers": ch_divers(),
             "motifs": [{"code": k, "libelle": v} for k, v in MOTIFS.items()]}
 
 
@@ -770,8 +811,10 @@ def _alertes(p: dict, a: dt.datetime) -> list:
     if p.get("recu"):
         alertes.append("Pointé hors ligne, reçu le %s à %s" % (p["recu"][8:10] + "/" + p["recu"][5:7],
                                                               p["recu"][11:16]))
-    if p.get("source") == "tablette":
+    if p.get("source") == "tablette" and p["ch"] != ch_divers():
         alertes.append("CH saisi à la main, absent des plannings")
+    if p["ch"] and p["ch"] == ch_divers():
+        alertes.append("CH DIVERS : à transférer vers le bon CH dès qu'il est connu")
     return alertes
 
 
@@ -884,7 +927,7 @@ def valider_tout(db, lundi: dt.date, par: str, a: dt.datetime) -> dict:
         r = rhi(db, p["nom"], lundi, a)
         if not r["total"] or r["validee"]:
             continue
-        raisons = sorted({x for q in r["pointages"] for x in q["alertes"] if not x.startswith("Pointé hors ligne")})
+        raisons = sorted({x for q in r["pointages"] for x in q["alertes"] if not x.startswith(INFORMATIVES)})
         if p["nom"] in sans_pointage:
             raisons.append("journée au planning sans pointage")
         if not raisons:
