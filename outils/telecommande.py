@@ -17,6 +17,10 @@ Gestes :
              pour le courrier
   courrier   recopie SMTP_* et MAIL_FROM d'Ali Baba vers RHI, puis redémarre
   redemarrer redémarre RHI (les variables ne s'appliquent qu'au redémarrage)
+  nettoyer   retire de RHI les variables qu'il ne lit pas (le 30/09/2026, tout
+             le réglage d'Ali Baba y avait été collé : sa clé Anthropic, ses
+             clés InterFast des autres sociétés…) et remet en place la commande
+             de lancement et le bucket de RHI s'ils ne sont plus les siens
 """
 import json
 import os
@@ -29,10 +33,15 @@ ICI = Path(__file__).resolve().parent
 CLEVER = os.environ.get("CLEVER", "clever")
 ALIBABA = os.environ.get("ALIBABA", "app_fa770bf7-8ea1-4e5f-9312-1bd36e467cb5")
 COURRIER = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "MAIL_FROM")
-ATTENDUES = ("RHI_DONNEES", "RHI_CODE_TERRAIN", "RHI_CODE_BUREAU", "RHI_MARCHE_A",
+ATTENDUES = ("RHI_CODE_TERRAIN", "RHI_CODE_BUREAU", "RHI_MARCHE_A",
              "SMTP_HOST", "SMTP_USER", "SMTP_PASS", "INTERFAST_VIP")
 FACULTATIVES = ("SMTP_PORT", "MAIL_FROM", "RHI_CH_DIVERS", "RHI_CH_FRAIS_GENERAUX",
-                "RHI_COUT_HORAIRE", "RHI_ENTREPRISE")
+                "RHI_COUT_HORAIRE", "RHI_ENTREPRISE", "RHI_DONNEES", "RHI_PRODUCTION")
+# Ce que Clever lit pour lancer RHI (docs/deploiement.md, § 3). Pas des secrets.
+LANCEMENT = {"CC_RUN_COMMAND": "uvicorn app:app --host 0.0.0.0 --port 9000", "CC_PYTHON_VERSION": "3.12"}
+# Tout ce que RHI lit : le reste, sur RHI, ne sert à rien — et une clé qui ne
+# sert à rien est une clé qui fuit pour rien.
+UTILES = set(ATTENDUES) | set(FACULTATIVES) | set(LANCEMENT) | {"CC_FS_BUCKET"}
 
 
 def conf() -> dict:
@@ -66,10 +75,34 @@ def clever(*args, env=None) -> str:
     return r.stdout
 
 
+def lire(app: str) -> dict:
+    return json.loads(clever("env", "--app", app, "--format", "json"))
+
+
 def variables(app: str) -> dict:
     """Les variables posées à la main sur une application : {nom: valeur}."""
-    brut = json.loads(clever("env", "--app", app, "--format", "json"))
-    return {v["name"]: v.get("value") or "" for v in brut.get("env", [])}
+    return {v["name"]: v.get("value") or "" for v in lire(app).get("env", [])}
+
+
+def bucket_attendu(app: str) -> str:
+    """/donnees:<hôte du FS Bucket relié à CETTE application>, ou '' sans bucket."""
+    for addon in lire(app).get("fromAddons", []):
+        for v in addon.get("env") or []:
+            if v.get("name") == "BUCKET_HOST" and v.get("value"):
+                return "/donnees:" + v["value"]
+    return ""
+
+
+def diagnostic(rhi: str, v: dict) -> dict:
+    """Ce qui ne va pas dans les réglages de RHI, sans jamais dire une valeur
+    secrète (la commande de lancement n'en est pas une : elle est dans la doc)."""
+    a = variables(ALIBABA)
+    bucket = bucket_attendu(rhi)
+    d = {"inutiles": sorted(n for n in v if n not in UTILES),
+         "lancement": {n: attendu for n, attendu in LANCEMENT.items() if v.get(n) != attendu},
+         "bucket": bool(bucket) and v.get("CC_FS_BUCKET") != bucket, "bucket_valeur": bucket,
+         "bucket_alibaba": bool(v.get("CC_FS_BUCKET")) and v.get("CC_FS_BUCKET") == a.get("CC_FS_BUCKET")}
+    return d
 
 
 def etat(rhi: str) -> dict:
@@ -80,9 +113,16 @@ def etat(rhi: str) -> dict:
     for nom in FACULTATIVES:
         if nom in v:
             dire(f"- ✅ `{nom}` : {'réglé' if v[nom] else 'vide'}")
-    autres = sorted(set(v) - set(ATTENDUES) - set(FACULTATIVES))
-    if autres:
-        dire(f"- autres : {', '.join(f'`{n}`' for n in autres)}")
+    d = diagnostic(rhi, v)
+    dire("### Lancement")
+    for n, attendu in LANCEMENT.items():
+        dire(f"- {'✅' if n not in d['lancement'] else '❌'} `{n}` : "
+             + ("conforme" if n not in d["lancement"] else f"« {v.get(n, '')} », attendu « {attendu} »"))
+    dire(f"- {'❌' if d['bucket'] else '✅'} `CC_FS_BUCKET` : "
+         + ("le bucket d'ALI BABA" if d["bucket_alibaba"] else "pas celui de RHI" if d["bucket"]
+            else "le bucket de RHI" if d["bucket_valeur"] else "aucun bucket relié à RHI trouvé"))
+    if d["inutiles"]:
+        dire(f"- ⚠️ inutiles à RHI (geste « nettoyer ») : {', '.join(f'`{n}`' for n in d['inutiles'])}")
     a = variables(ALIBABA)
     dire("### Courrier chez Ali Baba")
     dire(", ".join(f"`{n}` {'✅' if a.get(n) else '❌'}" for n in COURRIER))
@@ -105,6 +145,26 @@ def courrier(rhi: str):
     redemarrer(rhi)
 
 
+def nettoyer(rhi: str):
+    d = diagnostic(rhi, variables(rhi))
+    for n in d["inutiles"]:
+        clever("env", "rm", n, "--app", rhi)
+    if d["inutiles"]:
+        dire(f"🧹 Retirés de RHI : {', '.join(f'`{n}`' for n in d['inutiles'])}")
+    for n, attendu in d["lancement"].items():
+        clever("env", "set", n, attendu, "--app", rhi)
+        dire(f"✅ `{n}` remis à « {attendu} »")
+    if d["bucket"]:
+        masquer(d["bucket_valeur"])
+        clever("env", "import-vars", "CC_FS_BUCKET", "--app", rhi,
+               env=dict(os.environ, CC_FS_BUCKET=d["bucket_valeur"]))
+        dire("✅ `CC_FS_BUCKET` remis sur le bucket de RHI")
+    if d["lancement"] or d["bucket"]:
+        redemarrer(rhi)
+    elif not d["inutiles"]:
+        dire("Rien à nettoyer.")
+
+
 def redemarrer(rhi: str):
     clever("restart", "--app", rhi, "--quiet")
     dire("🔄 RHI redémarre : les variables s'appliquent au redémarrage (une à deux minutes).")
@@ -112,7 +172,7 @@ def redemarrer(rhi: str):
 
 if __name__ == "__main__":
     geste = sys.argv[1] if len(sys.argv) > 1 else "etat"
-    gestes = {"etat": etat, "courrier": courrier, "redemarrer": redemarrer}
+    gestes = {"etat": etat, "courrier": courrier, "redemarrer": redemarrer, "nettoyer": nettoyer}
     if geste not in gestes:
         raise SystemExit(f"geste inconnu : {geste} ({', '.join(gestes)})")
     rhi = conf()["APP_VIP"]
