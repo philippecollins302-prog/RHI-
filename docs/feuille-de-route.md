@@ -60,6 +60,11 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 - ~~Analyse de la marche en avant BET → fab → pose~~ — faite (bureau →
   *Marche en avant*), en code et avec bancs : une date de fabrication future
   n'est jamais « réalisée », et le traitement de surface est dans la chaîne.
-  ~~L'envoi automatique du lundi 7 h~~ — fait : SMTP d'Ali Baba,
-  destinataires dans `RHI_MARCHE_A`. Reste à régler ces variables sur
-  Clever Cloud.
+  L'envoi automatique du lundi 7 h est écrit et tenu par un banc, mais
+  **volontairement éteint** (décision de Philippe, 30/09/2026) : Ali Baba
+  n'a en réalité aucun réglage SMTP à recopier — cette ligne annonçait
+  l'inverse —, et une boîte d'envoi se crée au nom d'une personne. En
+  attendant, la synthèse se télécharge (Marche en avant → « ⬇ La
+  synthèse »). `RHI_MARCHE_A` est réglé ; pour allumer l'envoi, il suffira
+  de `SMTP_HOST`, `SMTP_PORT` (587, STARTTLS), `SMTP_USER`, `SMTP_PASS` et
+  `MAIL_FROM` sur Clever, puis du geste « etat » de la télécommande.
