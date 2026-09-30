@@ -51,13 +51,18 @@ Tout garde échoue fermé : secrets absents, site muet, JSON illisible, champ
 `version` absent, ancien commit servi — tout cela est rouge, jamais « on
 suppose que ça va ».
 
-La chaîne demande deux secrets GitHub, `CLEVER_TOKEN` et `CLEVER_SECRET` :
+La chaîne demande deux secrets GitHub, `CLEVER_TOKEN` et `CLEVER_SECRET`,
+pris dans la session `clever login` du poste :
 
-    F=~/.config/clever-cloud/clever-tools.json
-    python3 -c "import json;print(json.load(open('$F'))['token'])"  | gh secret set CLEVER_TOKEN  -R philippecollins302-prog/RHI-
-    python3 -c "import json;print(json.load(open('$F'))['secret'])" | gh secret set CLEVER_SECRET -R philippecollins302-prog/RHI-
+    sh outils/secrets-github.sh
 
-Sans eux, le premier déploiement est rouge et le dit.
+Sans eux, le premier déploiement est rouge et le dit. **Ne pas les recopier
+à la main depuis `clever-tools.json`** : cette notice le faisait en lisant
+`['token']` à la racine du fichier, alors que clever-tools 4 range la
+session dans une liste `profiles`. Le premier déploiement a été refusé
+(« Your token is invalid », 30/09/2026). L'outil lit les deux formes, pose
+les deux secrets ensemble et n'affiche aucune valeur (`banc-secrets`).
+Ils expirent avec la session Clever : la reposer à ce moment-là.
 
 ### Le déploiement coupe-t-il le service ?
 
