@@ -11,7 +11,7 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
 - Procédure écrite : `docs/deploiement.md` (application GROUP ALMA, FS
   Bucket, variables, vérification par `/api/sante`), et en une commande :
   `sh outils/clever-installer.sh`. Reste une session `clever login`, les clés
-  dans la console, et le « pousse » de Philippe pour la branche `prod`.
+  dans la console, et les deux secrets GitHub de la chaîne (`main` déploie seule).
 - ~~Revue de sécurité avant Internet~~ — faite le 29/09/2026 : codes qui
   échouent fermés, frein aux codes faux, CSV sans formule, fichiers monstres
   refusés, santé publique muette, semaine validée non rouverte par un geste

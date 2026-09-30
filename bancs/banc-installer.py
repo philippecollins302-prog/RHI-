@@ -53,7 +53,7 @@ t, b = variables["RHI_CODE_TERRAIN"], variables["RHI_CODE_BUREAU"]
 verif(len(t) == 8 and len(b) >= 12 and t != b, "deux codes tirés au hasard, bureau d'au moins 12 caractères")
 verif(t in r.stdout and b in r.stdout, "affichés une fois pour être notés")
 verif(not any(l.startswith("deploy") for l in appels.splitlines()),
-      "aucun déploiement : il attend « pousse »")
+      "aucun déploiement : c'est le travail de la chaîne, après les bancs")
 verif(not any("INTERFAST" in l or "SMTP_PASS" in l for l in appels.splitlines()),
       "aucune clé ni mot de passe en ligne de commande")
 

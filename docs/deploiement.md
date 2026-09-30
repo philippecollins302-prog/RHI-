@@ -18,30 +18,78 @@ sur son disque disparaît, **base comprise**. La base vit donc sur un
 
 ## L'application VIP Plus existe (29/09/2026)
 
-| | |
-|---|---|
-| Application | `app_a5509cc0-71a5-49d4-b201-ca1941713f22` |
-| Organisation | GROUP ALMA (`orga_b3f4776d-f719-4c57-afbb-628b175dff3a`) |
-| Adresse par défaut | `https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io` |
+Identifiant, organisation et adresse : **`outils/clever.conf`**, la seule
+copie (installeur, vérification et chaîne la lisent). Créée à la console,
+sans lien GitHub : c'est la chaîne ci-dessous qui déploie, pas Clever.
 
-Créée depuis la console, sans lien GitHub : rien ne se déploie tout seul. Le
-29/09 au soir, l'adresse répondait 503 — normal, aucun code n'y était encore
-poussé. Pour y relier un poste (et que `outils/clever-installer.sh` la
-reconnaisse au lieu d'en créer une autre) :
+## La chaîne : main → bancs → déploiement → le site réel jugé
 
-    clever link app_a5509cc0-71a5-49d4-b201-ca1941713f22 --alias rhi
+**`main` est la branche vivante, et elle déploie seule** (décision de
+Philippe, 30/09/2026 : « oui, main déploie seule »). Ce qui y arrive et passe
+les bancs part en production sans qu'on le redemande
+(`.github/workflows/chaine.yml`, tenue par `banc-chaine`) :
 
-Déployer — **seulement quand Philippe dit « pousse »** :
+1. toute poussée, toute PR : `sh bancs/tous.sh` ;
+2. poussée sur `main`, bancs verts : `clever deploy` vers l'application de
+   `clever.conf` — **un seul déploiement à la fois, celui en vol n'est jamais
+   annulé** (GitHub n'en garde qu'un en attente : de trois poussées serrées,
+   la deuxième est remplacée par la troisième) ;
+3. puis `outils/verifier-deploiement.sh` interroge le site jusqu'à ce qu'il
+   serve **ce commit** (`"version"` de `/api/sante`, posée par Clever dans
+   `COMMIT_ID`) et se dise **prêt**. Dix minutes au plus ; sinon rouge. Un
+   `clever deploy` « réussi » ne suffit pas : Ali Baba en a eu cinq de suite
+   avec le site en 503 ;
+4. un échec sur `main` ouvre une issue **assignée à Philippe** (étiquette
+   `chaine-rouge`), un nouvel échec la commente, et le prochain déploiement
+   vérifié la **referme tout seul**. Le motif est écrit en tête du run.
 
+`[sans-deploiement]` dans le message de commit : bancs seuls (docs, bancs,
+outils — rien de ce qui est servi). Une issue ouverte reste alors ouverte :
+seul un déploiement vérifié dit que le site va bien.
+
+Tout garde échoue fermé : secrets absents, site muet, JSON illisible, champ
+`version` absent, ancien commit servi — tout cela est rouge, jamais « on
+suppose que ça va ».
+
+La chaîne demande deux secrets GitHub, `CLEVER_TOKEN` et `CLEVER_SECRET` :
+
+    F=~/.config/clever-cloud/clever-tools.json
+    python3 -c "import json;print(json.load(open('$F'))['token'])"  | gh secret set CLEVER_TOKEN  -R philippecollins302-prog/RHI-
+    python3 -c "import json;print(json.load(open('$F'))['secret'])" | gh secret set CLEVER_SECRET -R philippecollins302-prog/RHI-
+
+Sans eux, le premier déploiement est rouge et le dit.
+
+### Le déploiement coupe-t-il le service ?
+
+**Normalement non, mais ce n'est pas encore mesuré** (pas d'accès Clever
+depuis le développement). D'après le fonctionnement de Clever — à confirmer —
+un déploiement démarre une nouvelle instance, attend qu'elle réponde, bascule
+le trafic, puis arrête l'ancienne. Donc :
+
+- **pas de coupure attendue**. Si la nouvelle ne démarre pas, l'ancienne
+  continue de servir, et la vérification voit l'ancien commit : rouge ;
+- **mais pendant la bascule, deux processus RHI tournent sur la même base
+  SQLite du bucket**, quelques dizaines de secondes. Les requêtes vont à l'un
+  ou à l'autre ; le risque est une écriture de chacun au même instant, par
+  exemple le veilleur horaire (sauvegarde, courrier du lundi). Faible, pas nul ;
+- s'il y a une coupure, les tablettes gardent leurs gestes : un 503 les
+  laisse dans la file (`banc-file`), ils repartent au retour.
+
+**Au premier déploiement :** regarder `clever activity`, chronométrer le 503
+éventuel, puis écrire ici la durée constatée à la place de ce paragraphe.
+
+### À la main, en secours
+
+Si la chaîne est en panne (secrets expirés, GitHub indisponible) :
+
+    . outils/clever.conf
+    clever link "$APP_VIP" --org "$ORGA" --alias rhi
     clever deploy --alias rhi
-    clever activity --alias rhi        # OK ou FAIL : un push ne prouve rien
     sh outils/verifier-deploiement.sh "$(git rev-parse HEAD)"
 
 La vérification juge le site, pas le code de sortie : il doit servir CE
-commit (`"version"` de `/api/sante`, que Clever pose dans `COMMIT_ID`) et se
-dire prêt. Elle échoue fermée : 503, JSON illisible, ancien commit, pas de
-version, tout est rouge, avec le motif en tête. Identifiant, organisation et
-adresse de l'application : `outils/clever.conf`, la seule copie.
+commit et se dire prêt. Elle échoue fermée : 503, JSON illisible, ancien
+commit, pas de version, tout est rouge, avec le motif en tête.
 
 ## 0. En une commande (étapes 1 à 3)
 
@@ -55,7 +103,7 @@ Il crée l'application dans GROUP ALMA, à Paris, une seule instance, le FS
 Bucket relié et monté sur `donnees/`, les variables de base, et tire deux
 codes d'accès au hasard — **affichés une seule fois : les noter**. Relançable
 sans dégâts : il ne recrée rien et ne remplace jamais des codes déjà posés.
-Il ne déploie pas (on attend « pousse ») et ne pose ni clé InterFast ni mot de
+Il ne déploie pas (c'est le travail de la chaîne) et ne pose ni clé InterFast ni mot de
 passe SMTP : ceux-là passent par la console, jamais par une ligne de
 commande. Un banc (`banc-installer`) le joue contre un faux `clever`.
 
@@ -68,7 +116,8 @@ Console → organisation **GROUP ALMA** (pas l'espace personnel) → *Create* �
 
 - Nom : `rhi` · Région : **Paris** (le bucket doit être dans la même) ·
   Taille : `XS` · **1 instance minimum, 1 maximum**.
-- Relier au dépôt GitHub `philippecollins302-prog/RHI-`, branche **`prod`**.
+- **Ne pas** relier au dépôt GitHub : c'est la chaîne (Actions) qui déploie,
+  après les bancs. Un lien GitHub de Clever déploierait sans eux.
 
 ## 2. Créer le FS Bucket
 
@@ -93,10 +142,10 @@ relié à l'application `rhi`. Noter son hôte
 `RHI_DONNEES` n'est pas à régler : `donnees/` est la valeur par défaut, et
 c'est là que le bucket est monté.
 
-## 4. Déployer, puis vérifier — un `git push` ne prouve rien
+## 4. Vérifier — un `git push` ne prouve rien
 
-Le déploiement part à la poussée sur `prod` (règle du groupe : **on ne pousse
-`prod` que quand Philippe dit « pousse »**). Ensuite, deux lectures.
+La chaîne vérifie toute seule après chaque déploiement. Pour regarder soi-même,
+deux lectures.
 
 Publique — elle ne dit que « prêt » ou non, pour ne rien apprendre à un
 visiteur :

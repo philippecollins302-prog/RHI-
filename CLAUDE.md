@@ -123,14 +123,14 @@ joue une semaine entière à travers l'API avec une horloge truquée
 ## Déploiement — voir docs/deploiement.md
 Clever Cloud, organisation GROUP ALMA, FS Bucket monté sur `donnees/`,
 **une seule instance**, SQLite en journal **`delete`** (le WAL ne marche pas
-sur le bucket réseau). La branche `prod` déclenche le déploiement : on ne la
-pousse **que quand Philippe dit « pousse »**. Après chaque déploiement, lire
-`/api/sante` (publique : « prêt » ou non) puis `/api/sante/detail` (code
-bureau) : un `git push` réussi ne prouve rien. Application VIP Plus :
-`app_a5509cc0-71a5-49d4-b201-ca1941713f22` (GROUP ALMA), adresse
-`https://app-a5509cc0-71a5-49d4-b201-ca1941713f22.cleverapps.io` — lire le
-site, jamais la branche. La mise en place tient en une
-commande, `sh outils/clever-installer.sh [vip|alfa]`, qui ne déploie pas.
+sur le bucket réseau). **`main` est la branche vivante et déploie seule**
+(décision de Philippe, 30/09/2026) : poussée sur `main` → les bancs →
+`clever deploy` → `outils/verifier-deploiement.sh`, qui exige que le site
+serve CE commit et se dise prêt (`.github/workflows/chaine.yml`, tenue par
+`banc-chaine`). Ce qui est vert part sans redemander. `[sans-deploiement]`
+dans le message de commit = bancs seuls. Un échec ouvre une issue assignée à
+Philippe ; le retour au vert la referme. Identifiants Clever :
+`outils/clever.conf`, la seule copie.
 
 ## Accès
 `RHI_CODE_TERRAIN` (tablettes, téléphones) et `RHI_CODE_BUREAU` dans

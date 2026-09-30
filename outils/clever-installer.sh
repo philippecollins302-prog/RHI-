@@ -11,8 +11,8 @@
 # dépôt — le dépôt est public).
 #
 # Ce qu'il ne fait PAS, exprès :
-#   - déployer. La règle du groupe tient : on ne pousse que quand Philippe
-#     dit « pousse ». Le déploiement reste un geste à part (fin du script) ;
+#   - déployer. C'est le travail de la chaîne (.github/workflows/chaine.yml) :
+#     une poussée sur main, bancs verts, puis le site vérifié ;
 #   - poser les clés InterFast et le mot de passe SMTP : ils ne passent que
 #     par la console Clever, jamais par une ligne de commande qui finit dans
 #     un historique.
@@ -98,8 +98,8 @@ cat <<FIN
    RHI_MARCHE_A         les destinataires de la marche du lundi
    SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS MAIL_FROM   comme dans Ali Baba
 
-── Puis, quand Philippe dit « pousse » et pas avant :
+── Le déploiement, c'est la chaîne (poussée sur main). En secours, à la main :
    $CLEVER deploy --alias $NOM
    $CLEVER activity --alias $NOM      # le déploiement est-il OK ?
-   curl -s https://<app>.cleverapps.io/api/sante   # « pret »: true
+   sh outils/verifier-deploiement.sh "\$(git rev-parse HEAD)"
 FIN
