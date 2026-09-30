@@ -1,0 +1,41 @@
+# ═══ LA TÉLÉCOMMANDE — régler RHI sur Clever sans poste ni console ═══
+#
+# Actions → « Télécommande Clever » → Run workflow → choisir le geste.
+# Claude la lance lui-même (API GitHub) : c'est ce qui lui permet de régler
+# Clever sans demander à personne de copier-coller dans la console.
+# Le dépôt est public, ce journal aussi : l'outil ne dit que des NOMS de
+# variables, jamais leurs valeurs (tenu par bancs/banc-telecommande.py).
+name: Télécommande Clever
+
+on:
+  workflow_dispatch:
+    inputs:
+      geste:
+        description: "etat · courrier (recopie SMTP d'Ali Baba) · redemarrer"
+        required: true
+        default: etat
+        type: choice
+        options: [etat, courrier, redemarrer]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploiement-rhi-vip       # jamais pendant un déploiement
+  cancel-in-progress: false
+
+jobs:
+  geste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLEVER_TOKEN: ${{ secrets.CLEVER_TOKEN }}
+      CLEVER_SECRET: ${{ secrets.CLEVER_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install -g clever-tools@5
+      - name: ${{ inputs.geste }}
+        run: python3 outils/telecommande.py "${{ inputs.geste }}"
