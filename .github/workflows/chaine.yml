@@ -72,12 +72,31 @@ jobs:
             echo "secrets CLEVER_TOKEN / CLEVER_SECRET absents du dépôt GitHub : rien n'est déployé" > motif.txt
             exit 1
           fi
+      # clever-tools 5 exige Node 24 : sous le Node 22 du runner, il répondait
+      # « not logged in » avec de bons identifiants (premier déploiement, 30/09).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: clever-tools
         run: npm install -g clever-tools@5 || { echo "clever-tools ne s'installe pas" > motif.txt; exit 1; }
+      - name: Connexion Clever
+        # Un maillon à part : « identifiants refusés » et « déploiement raté »
+        # ne se soignent pas pareil, le motif doit les distinguer.
+        run: |
+          if ! clever profile > profil.log 2>&1; then
+            cat profil.log
+            echo "Clever refuse CLEVER_TOKEN / CLEVER_SECRET : $(grep -m1 -i 'error' profil.log || tail -n 1 profil.log)" > motif.txt
+            exit 1
+          fi
+          head -n 1 profil.log
       - name: Déployer
         run: |
           . outils/clever.conf
-          clever link "$APP_VIP" --org "$ORGA" --alias rhi
+          if ! clever link "$APP_VIP" --alias rhi > link.log 2>&1; then
+            cat link.log
+            echo "clever link a échoué : $(tail -n 1 link.log)" > motif.txt
+            exit 1
+          fi
           if ! clever deploy --alias rhi --force --same-commit-policy restart > deploy.log 2>&1; then
             cat deploy.log
             echo "clever deploy a échoué : $(tail -n 2 deploy.log | tr '\n' ' ')" > motif.txt

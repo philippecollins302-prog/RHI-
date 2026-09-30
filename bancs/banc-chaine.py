@@ -32,6 +32,17 @@ verif(etapes.index("clever deploy") < etapes.index("verifier-deploiement.sh"), "
 verif('-z "$CLEVER_TOKEN"' in etapes, "secrets absents : refus explicite, pas un clever qui échoue on ne sait où")
 verif("secrets.CLEVER_TOKEN" in texte and not re.search(r"CLEVER_(TOKEN|SECRET)\s*[:=]\s*['\"]?[A-Za-z0-9]{12}", texte),
       "les identifiants viennent des secrets GitHub, jamais écrits en clair")
+noms = [e.get("name", "") for e in d["steps"]]
+node = [e for e in d["steps"] if "setup-node" in str(e.get("uses", ""))]
+verif(node and str(node[0]["with"]["node-version"]) >= "24" and "clever-tools@5" in etapes,
+      "clever-tools 5 sous Node 24 : sous Node 22, il se disait « not logged in » (30/09)")
+verif(noms.index("Connexion Clever") < noms.index("Déployer") and "clever profile" in etapes,
+      "la connexion est éprouvée à part, avant de déployer : un refus d'identifiants a son propre motif")
+# Chaque commande clever qui peut échouer écrit son motif : le premier échec
+# réel (clever link) avait donné « étape sans motif écrit ».
+for cmd in ("clever link", "clever deploy", "clever profile"):
+    bloc = etapes[etapes.index(cmd) - 12: etapes.index(cmd) + 200]
+    verif("if !" in bloc and "motif.txt" in bloc, f"« {cmd} » : un échec écrit son motif")
 verif(d.get("outputs", {}).get("motif") and jobs["bancs"].get("outputs", {}).get("motif"),
       "chaque maillon rend son motif")
 verif("GITHUB_STEP_SUMMARY" in str(jobs["bancs"]) and "GITHUB_STEP_SUMMARY" in etapes,
