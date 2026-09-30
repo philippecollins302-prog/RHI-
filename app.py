@@ -254,6 +254,7 @@ def api_config():
 def _etat(c) -> dict:
     chemin = Path(getattr(app.state, "chemin_base", None) or base.chemin_base()).resolve()
     return {"ok": True, "heure": maintenant().isoformat(), "interfast_ecriture": interfast.ECRITURE,
+            "interfast_essai": interfast.essai(),
             "entreprise": interfast.entreprise(),
             "base": {"dans_donnees": "donnees" in chemin.parts or bool(os.getenv("RHI_DONNEES")),
                      "journal": c.execute("PRAGMA journal_mode").fetchone()[0],
@@ -611,7 +612,10 @@ def api_marche_md(jour: str | None = None, c=Depends(db)):
 @app.get("/api/interfast/envois", dependencies=[Depends(acces_bureau)])
 def api_envois(semaine: str | None = None, c=Depends(db)):
     """À blanc : ce qui partirait vers InterFast pour une semaine validée."""
-    return base.envois(c, _lundi(semaine), maintenant()) | {"ecriture": interfast.ECRITURE}
+    d = base.envois(c, _lundi(semaine), maintenant())
+    for x in d["cases"]:
+        x["ecriture"] = interfast.ecriture_permise(x["ch"])
+    return d | {"ecriture": interfast.ECRITURE, "essai": interfast.essai()}
 
 
 ENVOI_EN_COURS = asyncio.Lock()
@@ -629,8 +633,9 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
     Une à la fois, en série (le MCP se trompe sous les appels parallèles) ;
     chaque référence est gardée dès qu'elle arrive, si bien qu'une panne au
     milieu ne renvoie jamais deux fois la même case. Coupé tant que
-    ECRITURE = False : 403, et rien n'est tenté."""
-    if not interfast.ECRITURE:
+    ECRITURE = False : 403, et rien n'est tenté — sauf sur l'affaire d'essai,
+    seule à pouvoir partir avant l'interrupteur."""
+    if not interfast.ECRITURE and not interfast.essai():
         raise HTTPException(403, "Écriture InterFast coupée : rien n'est envoyé (docs/interfast.md)")
     # Un seul envoi à la fois, quel que soit le poste : un second clic
     # pendant un envoi de plusieurs minutes posait chaque case deux fois.
@@ -639,8 +644,11 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
     async with ENVOI_EN_COURS:
         t = getattr(app.state, "transport_interfast", None)
         d = base.envois(c, _lundi(e.semaine), maintenant())
-        voulues = [x for x in d["cases"] if x["etat"] == "prête" and (e.cases is None or x["id"] in e.cases)]
-        posees, echecs = [], []
+        choisies = [x for x in d["cases"] if x["etat"] == "prête" and (e.cases is None or x["id"] in e.cases)]
+        voulues = [x for x in choisies if interfast.ecriture_permise(x["ch"])]
+        posees = []
+        echecs = [{"id": x["id"], "erreur": f"hors essai : seule l'affaire {', '.join(interfast.essai())} peut partir"}
+                  for x in choisies if not interfast.ecriture_permise(x["ch"])]
         for case in voulues:
             try:
                 ref = await interfast.poser_case(case, t)

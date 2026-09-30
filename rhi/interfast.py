@@ -33,6 +33,26 @@ MCP_URL = "https://app.inter-fast.fr/mcp/http"
 # ET essayé sur une affaire de test.
 ECRITURE = False
 
+# L'essai, avant l'interrupteur (30/09/2026) : l'écriture est ouverte sur
+# l'affaire de test SEULEMENT, en production, pour qu'Alexis pose une case
+# depuis le bureau sans qu'une autre affaire puisse partir. Réglable par
+# RHI_ECRITURE_ESSAI (CH séparés par des virgules ; vide = aucun) ; par défaut
+# l'affaire de test de VIP Plus, choisie par Alexis.
+ESSAI_PAR_DEFAUT = {"VIP": "CH00066"}
+
+
+def essai() -> list:
+    """Les CH sur lesquels l'écriture est ouverte pour l'essai."""
+    v = os.getenv("RHI_ECRITURE_ESSAI")
+    if v is None:
+        v = ESSAI_PAR_DEFAUT.get(os.getenv("RHI_ENTREPRISE", "VIP").strip().upper(), "")
+    return sorted({c.strip().upper() for c in v.split(",") if c.strip()})
+
+
+def ecriture_permise(ch: str) -> bool:
+    """Tout, une fois l'interrupteur levé ; avant, les seules affaires d'essai."""
+    return ECRITURE or (ch or "").upper() in essai()
+
 
 class InterFastIndisponible(RuntimeError):
     pass
@@ -291,10 +311,10 @@ async def poser_case(case: dict, transport=None) -> str:
     confirmer_action crée. Un refus (« ❌ », « Aucune action ») s'arrête là,
     sans réessayer avec d'autres paramètres : le MCP le demande, et une
     case posée au mauvais endroit fausse un point d'affaire en silence."""
-    if not ECRITURE:
+    if not ecriture_permise(case.get("ch")):
         raise EcritureCoupee(
-            "Écriture InterFast coupée (rhi/interfast.py, ECRITURE = False) : à rebrancher "
-            "après l'essai sur une affaire de test (docs/interfast.md).")
+            f"Écriture InterFast coupée pour {case.get('ch')} : seule l'affaire d'essai "
+            f"({', '.join(essai()) or 'aucune'}) peut partir avant l'interrupteur (docs/interfast.md).")
     args = {"client": case["client"], "date": case["jour"], "heure": case["heure"],
             "duree": case["duree"], "techniciens": case["techniciens"], "description": case["description"]}
     if case.get("chantier"):
