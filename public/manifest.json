@@ -1,0 +1,9 @@
+{
+  "name": "RHI · Pointage",
+  "short_name": "RHI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F5F2",
+  "theme_color": "#1E6F4F",
+  "lang": "fr"
+}

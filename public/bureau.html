@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RHI · Bureau</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header><h1 id="titre-bureau">RHI · Bureau</h1><a href="mode-emploi.html" style="color:#fff">Mode d'emploi</a></header>
+<main>
+  <nav id="onglets">
+    <button data-onglet="rhi">RHI de la semaine</button>
+    <button data-onglet="verifier">À vérifier</button>
+    <button data-onglet="affaires">Point d'affaire</button>
+    <button data-onglet="marche">Marche en avant</button>
+    <button data-onglet="direct">En ce moment</button>
+    <button data-onglet="personnes">Personnes</button>
+    <button data-onglet="envois">Vers InterFast</button>
+    <button data-onglet="plannings">Plannings</button>
+  </nav>
+  <div id="vue"></div>
+</main>
+<div class="message" id="message"></div>
+<script src="commun.js"></script>
+<script src="bureau.js"></script>
+</body>
+</html>

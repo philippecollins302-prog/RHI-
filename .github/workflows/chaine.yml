@@ -1,0 +1,138 @@
+# ═══ LA CHAÎNE : une poussée sur main → les bancs → le déploiement → le site réel jugé ═══
+#
+# Chaque exigence vient d'une panne vécue sur Ali Baba (docs/deploiement.md,
+# « La chaîne ») :
+#   - les bancs sur toute poussée et toute PR ; seul main déploie ;
+#   - un déploiement à la fois, et jamais celui en vol n'est annulé ;
+#   - le verdict n'est pas le code de sortie de `clever deploy` : c'est le site
+#     qui doit servir CE commit et se dire prêt (outils/verifier-deploiement.sh) ;
+#   - tout garde qui ne sait pas lire refuse (secrets absents, site muet…) ;
+#   - un échec sur main ouvre une issue assignée à Philippe, le retour au vert
+#     la referme ; le motif s'écrit EN HAUT du run (résumé du job) ;
+#   - « [sans-deploiement] » dans le message de commit : bancs seuls.
+name: chaine
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bancs:
+    name: tous-les-bancs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      motif: ${{ steps.motif.outputs.motif }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Tous les bancs
+        # bash -eo pipefail (défaut d'Actions) : l'échec de tous.sh traverse le tee.
+        run: PY=python sh bancs/tous.sh 2>&1 | tee bancs.log
+      - name: Motif en tête du run
+        id: motif
+        if: failure()
+        run: |
+          m=$(grep -m 3 "❌" bancs.log 2>/dev/null | tr '\n' ' ')
+          m="Bancs rouges : ${m:-rien de lisible dans le journal, voir l'étape « Tous les bancs »}"
+          echo "motif=$m" >> "$GITHUB_OUTPUT"
+          echo "## ❌ $m" >> "$GITHUB_STEP_SUMMARY"
+
+  deploiement:
+    needs: bancs
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && !contains(github.event.head_commit.message, '[sans-deploiement]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Un seul à la fois ; celui qui tourne va au bout. (GitHub ne garde
+    # qu'UN déploiement en attente : si trois poussées se suivent, la
+    # deuxième est remplacée par la troisième — jamais celle en vol.)
+    concurrency:
+      group: deploiement-rhi-vip
+      cancel-in-progress: false
+    outputs:
+      motif: ${{ steps.motif.outputs.motif }}
+    env:
+      CLEVER_TOKEN: ${{ secrets.CLEVER_TOKEN }}
+      CLEVER_SECRET: ${{ secrets.CLEVER_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # clever deploy pousse l'historique vers Clever
+      - name: Secrets présents
+        run: |
+          if [ -z "$CLEVER_TOKEN" ] || [ -z "$CLEVER_SECRET" ]; then
+            echo "secrets CLEVER_TOKEN / CLEVER_SECRET absents du dépôt GitHub : rien n'est déployé" > motif.txt
+            exit 1
+          fi
+      - name: clever-tools
+        run: npm install -g clever-tools@5 || { echo "clever-tools ne s'installe pas" > motif.txt; exit 1; }
+      - name: Déployer
+        run: |
+          . outils/clever.conf
+          clever link "$APP_VIP" --org "$ORGA" --alias rhi
+          if ! clever deploy --alias rhi --force --same-commit-policy restart > deploy.log 2>&1; then
+            cat deploy.log
+            echo "clever deploy a échoué : $(tail -n 2 deploy.log | tr '\n' ' ')" > motif.txt
+            exit 1
+          fi
+          cat deploy.log
+      - name: Vérifier le site réel (pas le code de sortie)
+        run: |
+          if ! sh outils/verifier-deploiement.sh "$GITHUB_SHA" 2> verif.log; then
+            cat verif.log
+            sed -n 's/^MOTIF : //p' verif.log > motif.txt
+            exit 1
+          fi
+          echo "## ✅ En ligne : ${GITHUB_SHA::7} servi et prêt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Motif en tête du run
+        id: motif
+        if: failure()
+        run: |
+          m="Déploiement : $(cat motif.txt 2>/dev/null || echo 'étape sans motif écrit, voir le journal')"
+          echo "motif=$m" >> "$GITHUB_OUTPUT"
+          echo "## ❌ $m" >> "$GITHUB_STEP_SUMMARY"
+
+  alerte:
+    needs: [bancs, deploiement]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      BANCS: ${{ needs.bancs.result }}
+      DEPLOIEMENT: ${{ needs.deploiement.result }}
+      # Passés par l'environnement, jamais recollés dans le script : un motif
+      # contient du texte venu des bancs.
+      MOTIF_BANCS: ${{ needs.bancs.outputs.motif }}
+      MOTIF_DEPLOIEMENT: ${{ needs.deploiement.outputs.motif }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Ouvrir ou refermer l'alerte
+        run: |
+          gh label create chaine-rouge --color B60205 --description "La chaîne de main est rouge" --force >/dev/null
+          ouverte=$(gh issue list --label chaine-rouge --state open --json number --jq '.[0].number')
+          if [ "$BANCS" = failure ] || [ "$DEPLOIEMENT" = failure ] || [ "$BANCS" = cancelled ] || [ "$DEPLOIEMENT" = cancelled ]; then
+            motif="${MOTIF_BANCS:-$MOTIF_DEPLOIEMENT}"
+            motif="${motif:-bancs=$BANCS, déploiement=$DEPLOIEMENT (aucun motif écrit)}"
+            corps=$(printf '**%s**\n\nCommit `%s` · [le run](%s)\n\nCette issue se referme toute seule au prochain déploiement vérifié.' "$motif" "${GITHUB_SHA::7}" "$RUN")
+            if [ -n "$ouverte" ]; then
+              gh issue comment "$ouverte" --body "$corps"
+            else
+              gh issue create --title "Chaîne RHI rouge — $(printf '%s' "$motif" | cut -c1-120)" \
+                --label chaine-rouge --assignee philippecollins302-prog --body "$corps"
+            fi
+          elif [ "$DEPLOIEMENT" = success ] && [ -n "$ouverte" ]; then
+            for n in $(gh issue list --label chaine-rouge --state open --json number --jq '.[].number'); do
+              gh issue close "$n" --comment "Revenue au vert : \`${GITHUB_SHA::7}\` déployé, servi et prêt · [le run]($RUN)"
+            done
+          fi

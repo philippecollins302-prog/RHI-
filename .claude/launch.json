@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "RHI", "runtimeExecutable": ".venv/bin/uvicorn", "runtimeArgs": ["app:app", "--port", "9000"], "port": 9000 }
+  ]
+}

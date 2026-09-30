@@ -1,0 +1,80 @@
+/* RHI — des boutons qu'on touche avec des gants. Pas d'animation, pas de lib. */
+:root {
+  --fond: #F4F5F2; --carte: #FFFFFF; --texte: #1C2321; --doux: #5F6B66;
+  --trait: #D9DDD8; --vert: #1E6F4F; --vert-clair: #E3F1EA; --rouge: #B3261E;
+  --rouge-clair: #FBE9E7; --ambre: #9A6700; --ambre-clair: #FFF4D6; --bleu: #0E3D6B;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #121615; --carte: #1C2221; --texte: #EEF2F0; --doux: #9BA7A2;
+    --trait: #33403C; --vert: #4CC38A; --vert-clair: #173A2B; --rouge: #FF8A80;
+    --rouge-clair: #3D1B18; --ambre: #F2C14E; --ambre-clair: #3A2F12; --bleu: #8AB4F8;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fond); color: var(--texte);
+  font: 18px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  background: var(--vert); color: #fff; }
+header h1 { margin: 0; font-size: 20px; flex: 1; }
+header button { background: rgba(255,255,255,.15); color: #fff; border: 0; }
+main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+h2 { font-size: 16px; text-transform: uppercase; letter-spacing: .04em; color: var(--doux);
+  margin: 24px 0 8px; }
+button, .btn { font: inherit; cursor: pointer; border-radius: 12px; border: 1px solid var(--trait);
+  background: var(--carte); color: var(--texte); padding: 12px 16px; }
+button:active { transform: translateY(1px); }
+.grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.gros { min-height: 84px; font-size: 22px; font-weight: 600; text-align: left; }
+.gros small { display: block; font-size: 15px; font-weight: 400; color: var(--doux); margin-top: 4px; }
+.gros.choisi { border: 3px solid var(--vert); background: var(--vert-clair); }
+.chantier { min-height: 96px; }
+.ch { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--bleu); font-weight: 600; }
+.motif { min-height: 64px; font-size: 18px; }
+.encours { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px;
+  border-radius: 16px; background: var(--vert-clair); border: 2px solid var(--vert); }
+.encours .chrono { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.encours .quoi { flex: 1; min-width: 200px; }
+.stop { background: var(--rouge); color: #fff; border: 0; font-size: 22px; font-weight: 700;
+  min-height: 72px; min-width: 180px; }
+.rien { padding: 16px; border-radius: 16px; background: var(--carte); border: 1px dashed var(--trait);
+  color: var(--doux); }
+input, select { font: inherit; padding: 12px; border-radius: 12px; border: 1px solid var(--trait);
+  background: var(--carte); color: var(--texte); width: 100%; }
+.ligne { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ligne > * { flex: 1; min-width: 160px; }
+.valider { background: var(--vert); color: #fff; border: 0; font-weight: 700; min-height: 64px; }
+.message { position: fixed; left: 16px; right: 16px; bottom: 16px; padding: 16px; border-radius: 12px;
+  background: var(--texte); color: var(--fond); font-weight: 600; display: none; }
+.message.visible { display: block; }
+/* Bureau */
+nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+nav button.actif { background: var(--vert); color: #fff; border-color: var(--vert); }
+table { border-collapse: collapse; width: 100%; background: var(--carte); font-size: 15px; }
+th, td { padding: 8px; border-bottom: 1px solid var(--trait); text-align: left; vertical-align: top; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { font-weight: 700; }
+.defile { overflow-x: auto; }
+.pastille { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 13px; }
+.p-rouge { background: var(--rouge-clair); color: var(--rouge); }
+.p-ambre { background: var(--ambre-clair); color: var(--ambre); }
+.p-vert { background: var(--vert-clair); color: var(--vert); }
+.carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px; padding: 16px;
+  margin-bottom: 12px; }
+.doux { color: var(--doux); }
+.reseau { padding: 10px 16px; background: var(--ambre-clair); color: var(--ambre); font-weight: 600; }
+
+/* Le RHI imprimé : une page par personne, rien d'autre sur la feuille. */
+#impression { display: none; }
+@media print {
+  body.imprime > *:not(#impression) { display: none !important; }
+  body.imprime #impression { display: block; }
+  .feuille { page-break-after: always; font-size: 11pt; color: #000; }
+  .feuille h1 { font-size: 16pt; margin: 0 0 4pt; }
+  .feuille h2 { font-size: 12pt; margin: 12pt 0 4pt; }
+  .feuille table { width: 100%; border-collapse: collapse; }
+  .feuille th, .feuille td { border: 1px solid #999; padding: 2pt 4pt; }
+  .feuille .n { text-align: right; }
+  .signatures { display: flex; gap: 24pt; margin-top: 24pt; }
+  .signatures div { flex: 1; height: 60pt; border: 1px solid #999; padding: 4pt; }
+}
