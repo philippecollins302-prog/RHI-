@@ -39,7 +39,9 @@ for chemin, corps in file:
     verif(c.post(chemin, json=corps).status_code == 200, f"rejeu {chemin}")
 luc = rhi("LUC")
 l = {x["ch"] or x["motif"]: x["total"] for x in luc["lignes"]}
-verif(l == {"CH00901": 4.5, "CH00902": 3.5, "TRAJET": 1.0}, f"heures du geste, pas de l'envoi : {l}")
+# TRAJET n'est plus un motif (Alexis, 30/09) : une tablette restée hors ligne
+# qui le rejoue ne perd pas l'heure, elle tombe sur « Autre », à valider.
+verif(l == {"CH00901": 4.5, "CH00902": 3.5, "AUTRE": 1.0}, f"heures du geste, pas de l'envoi : {l}")
 verif(all(any("hors ligne" in a for a in p["alertes"]) for p in luc["pointages"]),
       "chaque pointage rejoué est signalé au bureau")
 verif(rhi("MARC")["total"] == 9.0, "le binôme aussi")

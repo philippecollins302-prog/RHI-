@@ -88,7 +88,7 @@ async function ongletRhi() {
         : `<button data-valider="${esc(r.personne)}">Valider la semaine</button>`}
       <div class="defile"><table>
         <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
-        ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || '—')}</td><td>${esc(l.libelle)}</td>
+        ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || l.ch_impute || '—')}</td><td>${esc(l.libelle)}</td>
           ${l.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n"><strong>${heures(l.total)}</strong></td></tr>`).join('')}
         <tr class="total"><td></td><td>Total</td>${r.par_jour.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(r.total)}</td></tr>
       </table></div>
@@ -141,7 +141,7 @@ function imprimerRhi(releves, lundi) {
         ${r.validee ? ` · validé par ${esc(r.validee.par)} le ${esc(date(r.validee.le))}` : ' · <strong>non validé</strong>'}</p>
       <table>
         <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
-        ${r.lignes.map((l) => `<tr><td>${esc(l.ch || '—')}</td><td>${esc(l.libelle)}</td>
+        ${r.lignes.map((l) => `<tr><td>${esc(l.ch || l.ch_impute || '—')}</td><td>${esc(l.libelle)}</td>
           ${l.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(l.total)}</td></tr>`).join('')}
         <tr class="total"><td></td><td>Total</td>${r.par_jour.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(r.total)}</td></tr>
       </table>

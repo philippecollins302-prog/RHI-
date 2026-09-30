@@ -49,7 +49,8 @@ m = c.get("/api/menu?personne=PAUL&jour=2026-09-28").json()
 verif([x["ch"] for x in m["planning"]] == ["CH00901"], f"planning du jour de Paul : {m['planning']}")
 verif(m["planning"][0]["chantier"] == "LES PINS", "nom du chantier depuis le backlog")
 verif({x["ch"] for x in m["affaires"]} >= {"CH00901", "CH00902"}, "toutes les affaires proposées")
-verif(any(x["code"] == "ATTENTE_MATIERE" for x in m["motifs"]), "motifs hors affaire")
+verif([x["code"] for x in m["motifs"]] == ["RANGEMENT", "ENTRETIEN", "FORMATION", "AUTRE"],
+      f"les quatre motifs d'Alexis (30/09), rien d'autre : {m['motifs']}")
 
 # ── Lundi : Paul ──
 a(7, 0)
@@ -61,7 +62,7 @@ c.post("/api/demarrer", json={"personnes": ["PAUL"], "ch": "ch 00902"})
 enc = c.get("/api/en-cours?personne=PAUL").json()["pointages"]
 verif(len(enc) == 1 and enc[0]["ch"] == "CH00902", "un seul pointage ouvert, le nouveau ; CH normalisé")
 a(12, 0)
-c.post("/api/demarrer", json={"personnes": ["PAUL"], "motif": "ATTENTE_MATIERE"})
+c.post("/api/demarrer", json={"personnes": ["PAUL"], "motif": "FORMATION"})
 a(12, 15)
 c.post("/api/demarrer", json={"personnes": ["PAUL"], "ch": "CH00901"})
 a(16, 0)
@@ -108,7 +109,7 @@ r0 = rhi["releves"][0]
 lignes = {l["ch"] or l["motif"]: l for l in r0["lignes"]}
 verif(lignes["CH00901"]["jours"][0] == 7.25, f"lundi CH00901 = 3h30 + 3h45 : {lignes['CH00901']}")
 verif(lignes["CH00902"]["total"] == 1.5, "CH00902 = 1h30")
-verif(lignes["ATTENTE_MATIERE"]["total"] == 0.25, "hors affaire 15 min")
+verif(lignes["FORMATION"]["total"] == 0.25, "hors affaire 15 min")
 verif(lignes["CH00999"]["jours"][1] == 1.0, "mardi, CH inconnu 1h")
 verif(r0["total"] == 10.0 and r0["hors_affaire"] == 0.25, f"total {r0['total']}")
 verif(r0["par_jour"][:2] == [9.0, 1.0], "par jour")
@@ -189,16 +190,16 @@ verif(("PAUL", "2026-09-30") not in {(o["personne"], o["jour"]) for o in d["oubl
 verif(c.get("/api/rhi?personne=LUC&semaine=2026-09-28").json()["oublis"][0]["personne"] == "LUC",
       "le RHI d'une personne ne montre que ses oublis")
 tp = d["temps_perdu"]
-verif(tp["motifs"] == [{"code": "ATTENTE_MATIERE", "libelle": "Attente matière / plans", "heures": 0.25,
+verif(tp["motifs"] == [{"code": "FORMATION", "libelle": "Formation", "heures": 0.25,
                         "qui": [["PAUL", 0.25]]}] and tp["hors_affaire"] == 0.25,
       f"le temps perdu, par motif et par personne : {tp}")
 verif(tp["part"] == round(100 * 0.25 / tp["total"]), "sa part dans les heures de la semaine")
 c.post("/api/pointages", json={"personne": "JEAN", "motif": "RANGEMENT", "debut": "2026-09-29T16:00:00",
                                "fin": "2026-09-29T16:00:20"})
 verif([m["code"] for m in c.get("/api/rhi?semaine=2026-09-28").json()["temps_perdu"]["motifs"]]
-      == ["ATTENTE_MATIERE"], "vingt secondes de « rangement » : un doigt qui a glissé, pas du temps perdu")
+      == ["FORMATION"], "vingt secondes de « rangement » : un doigt qui a glissé, pas du temps perdu")
 p0 = c.get("/api/rhi?personne=PAUL&semaine=2026-09-28").json()["releves"][0]["pointages"]
-verif(any(x["motif_libelle"] == "Attente matière / plans" for x in p0), "le motif en clair, pour la feuille imprimée")
+verif(any(x["motif_libelle"] == "Formation" for x in p0), "le motif en clair, pour la feuille imprimée")
 
 # ── Valider d'un geste ce qui n'a rien à regarder ──
 r = c.post("/api/validations/toutes", json={"semaine": "2026-09-28", "qui": "Alexis"}).json()

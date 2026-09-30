@@ -60,8 +60,11 @@ est faite.
   l'import, avec la raison.
 - **La pose pointe au téléphone du chef d'équipe**, pour lui et son binôme
   d'un seul geste. La tablette n'y survivrait pas.
-- **Le temps perdu se mesure** : motifs hors affaire (attente matière,
-  rangement, panne…) pointés comme une affaire.
+- **Le temps perdu se mesure** : quatre motifs hors affaire (rangement,
+  entretien machine, formation, autre à valider — Alexis, 30/09/2026),
+  pointés comme une affaire et imputés dans InterFast au CH des frais
+  généraux (`base.ch_frais_generaux()`). Le trajet n'est pas un motif : il
+  compte dans le chantier.
 - **Un arrêt oublié ne gonfle pas une affaire** : un pointage ouvert depuis
   plus de 10 h sort du point d'affaire (« en suspens ») jusqu'à correction.
 - **Une semaine validée est verrouillée** au bureau (corrections refusées,
