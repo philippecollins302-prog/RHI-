@@ -527,6 +527,7 @@ async function ongletEnvois() {
   const cl = {'prête': 'p-vert', 'bloquée': 'p-rouge', 'en attente': 'p-ambre', 'posée': 'p-ambre',
     'à compléter': 'p-rouge', 'terminée': 'p-vert', 'écart': 'p-rouge', 'à vérifier': 'p-rouge'};
   const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  const partantes = d.cases.filter((x) => x.etat === 'prête' && x.ecriture).length;
   const ligneEquipe = (e) => `<tr>
       <td>${esc(e.technicien)}${e.compte ? '' : ' <span class="pastille p-rouge">sans compte</span>'}
         ${e.valide ? '' : ' <span class="pastille p-ambre">RHI non validé</span>'}</td>
@@ -540,13 +541,16 @@ async function ongletEnvois() {
         les heures de chacun (début, fin, pause), puis on <strong>valide la feuille de temps</strong>
         (Équipe → la fiche → Feuilles de temps, en orange tant qu'elle n'est pas validée).
         Seules les heures validées comptent dans la marge du chantier.</p>
-      <p>${d.ecriture ? '' : '<span class="pastille p-ambre">Écriture vers InterFast coupée : rien ne part, on voit ce qui partirait.</span>'}</p>
+      <p>${d.ecriture ? '' : d.essai.length
+        ? `<span class="pastille p-ambre">Mode essai : seule l'affaire ${esc(d.essai.join(', '))} peut partir vers InterFast.</span>
+           Les autres cases montrent ce qui partirait, sans rien envoyer.`
+        : '<span class="pastille p-ambre">Écriture vers InterFast coupée : rien ne part, on voit ce qui partirait.</span>'}</p>
       <p><span class="pastille p-vert">${esc(d.pretes)} prêtes · ${heures(d.heures_pretes) || '0h'}</span>
         <span class="pastille p-ambre">${esc(d.en_attente)} en attente de validation</span>
         <span class="pastille p-rouge">${esc(d.bloquees)} bloquées</span>
         <span class="pastille">${esc(d.posees)} posées · ${esc(d.terminees)} terminées</span>
         ${d.ecarts ? `<span class="pastille p-rouge">${esc(d.ecarts)} avec un écart d'heures</span>` : ''}</p>
-      <p>${d.ecriture && d.pretes ? `<button class="btn" id="poser">Poser les ${esc(d.pretes)} cases prêtes dans InterFast</button>` : ''}
+      <p>${d.ecriture && partantes ? `<button class="btn" id="poser">Poser les ${esc(partantes)} cases prêtes dans InterFast</button>` : ''}
         ${d.posees + d.terminees + d.ecarts ? '<button class="btn" id="relire">Relire les heures reçues par InterFast</button>' : ''}
         <span id="retour-envoi"></span></p>
     </div>` + (d.cases.length ? d.cases.map((x) => `
@@ -555,7 +559,7 @@ async function ongletEnvois() {
       <strong>${esc(date(x.jour))} · ${esc(x.heure)}–${esc(x.fin)}</strong>
       <span class="ch">${esc(x.ch)}</span> ${esc(x.client)} <span class="doux">${esc(x.chantier)}</span>
       ${x.ref ? `<span class="pastille">${esc(x.ref)}</span>` : ''}
-      ${d.ecriture && x.etat === 'prête' ? `<button class="btn" data-poser="${esc(x.id)}">Poser cette case</button>` : ''}
+      ${x.ecriture && x.etat === 'prête' ? `<button class="btn" data-poser="${esc(x.id)}">${d.ecriture ? 'Poser cette case' : 'Essai : poser cette case dans InterFast'}</button>` : ''}
       ${x.blocages.length ? `<br><span class="doux">Bloquée : ${esc(x.blocages.join(' · '))}</span>` : ''}
       ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
       ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>
@@ -644,8 +648,8 @@ async function ongletMarche() {
       <p>${d.bet_charge ? `BET chargé, planifié jusqu'au ${esc(date(d.bet_a_jour_au || d.jour))}.`
         : '<span class="pastille p-ambre">BET non chargé : déposer le planning BET (onglet Plannings) pour les alertes « études ».</span>'}</p>
       <p><a class="btn" href="/api/marche.md" id="synthese">⬇ La synthèse en Markdown (à envoyer)</a></p>
-      <p>${!co.a.length ? '<span class="pastille p-ambre">Envoi du lundi 7 h : aucun destinataire (RHI_MARCHE_A)</span>'
-        : !co.smtp ? '<span class="pastille p-ambre">Envoi du lundi 7 h : serveur de courrier non réglé (SMTP_HOST)</span>'
+      <p>${!co.smtp ? '<span class="doux">L\'envoi automatique du lundi n\'est pas branché : la synthèse se télécharge ci-dessus, à transférer par mail.</span>'
+        : !co.a.length ? '<span class="pastille p-ambre">Envoi du lundi 7 h : aucun destinataire (RHI_MARCHE_A)</span>'
         : `Envoyée chaque lundi à 7 h à ${esc(co.a.join(', '))}. <button id="envoyer-marche">✉ Envoyer maintenant</button>`}
         ${co.dernier ? `<span class="doux">Dernier envoi : ${esc(co.dernier.jour)} — ${esc(co.dernier.statut)}</span>` : ''}</p>
     </div>` + (blocs || '<div class="rien">Aucune pose dans les 4 semaines : déposer le planning de pose.</div>');

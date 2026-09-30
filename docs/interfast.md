@@ -136,18 +136,26 @@ InterFast* :
   correction faite ensuite n'arriverait jamais dans InterFast. On corrige
   d'abord la case dans InterFast.
 
-Reste l'essai sur une affaire de test, avec Philippe, avant `ECRITURE = True`.
+Reste l'essai sur une affaire de test avant `ECRITURE = True`.
+
+**Le mode essai** (30/09/2026) : sans toucher à l'interrupteur, l'écriture
+est ouverte sur **l'affaire de test seulement** — CH00066 pour VIP Plus,
+choisie par Alexis, réglable par `RHI_ECRITURE_ESSAI` (CH séparés par des
+virgules ; vide = aucun). Toute autre case reste à blanc : le serveur la
+refuse « hors essai », et `poser_case` refuse encore derrière lui. L'essai
+se fait donc **en production, depuis le bureau**, par Alexis, sans poste de
+dev ni clé à manipuler. Tenu par `banc-couts`.
 
 **Déroulé de l'essai** (une seule case, un jour calme) :
 
-1. Choisir dans InterFast un chantier de test, avec un client, et deux
-   techniciens reliés dans RHI (onglet *Personnes*).
-2. Au bureau, saisir pour eux un pointage sur ce CH (*À vérifier* →
-   « Ajouter un pointage oublié »), puis valider leurs deux semaines.
-3. Passer `ECRITURE = True` sur un poste de dev branché sur la vraie clé,
-   jamais en production pour ce premier essai.
-4. *Vers InterFast* → **Poser cette case**, sur cette case seulement.
-   Vérifier dans le planning InterFast la date, l'heure, la durée, les deux
+1. Dans InterFast, vérifier que CH00066 a un client, et relier dans RHI
+   (onglet *Personnes*) les deux techniciens de l'essai à leur compte.
+2. Au bureau, saisir pour eux un pointage sur CH00066 (*À vérifier* →
+   « Ajouter un pointage oublié »), contrôler le CH (*Mes chantiers*), puis
+   valider leurs deux semaines.
+3. *Vers InterFast* → **Essai : poser cette case dans InterFast**, sur la
+   case de CH00066 — la seule qui porte ce bouton.
+4. Vérifier dans le planning InterFast la date, l'heure, la durée, les deux
    techniciens et le chantier.
 5. Terminer la case dans InterFast en recopiant les heures affichées par RHI,
    en en faussant exprès une de 30 min. Puis valider les feuilles de temps.
@@ -155,7 +163,9 @@ Reste l'essai sur une affaire de test, avec Philippe, avant `ECRITURE = True`.
    « écart » sur le bon technicien.
 7. Regarder la marge réelle du chantier dans InterFast : a-t-elle bougé ? Si
    non, le coût horaire de ces techniciens est sans doute à 0 €.
-8. Remettre `ECRITURE = False`, et consigner ici ce qui a été vu.
+8. Consigner ici ce qui a été vu. Si tout est juste : `ECRITURE = True`
+   (une ligne dans `rhi/interfast.py`), et toutes les affaires peuvent partir.
+
 Trois choses à y vérifier :
 
 1. la case se crée sur le bon chantier, avec toute l'équipe ;

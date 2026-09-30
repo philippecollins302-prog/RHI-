@@ -1,6 +1,7 @@
 """Personnes reliées à InterFast, coûts horaires, validation hebdomadaire.
 
 InterFast joué par un faux serveur ; noms inventés."""
+import asyncio
 import datetime as dt
 import json
 import os
@@ -27,7 +28,7 @@ v.executescript("""CREATE TABLE personnes (nom TEXT PRIMARY KEY, equipe TEXT NOT
                    INSERT INTO personnes(nom, equipe) VALUES ('ANCIEN', 'atelier');""")
 v.commit()
 v.close()
-from rhi import base  # noqa: E402
+from rhi import base, interfast  # noqa: E402
 b = base.connexion(ancienne)
 cols = {r[1] for r in b.execute("PRAGMA table_info(personnes)")}
 verif({"cout_horaire", "interfast_user_id", "nom_complet"} <= cols, "colonnes ajoutées")
@@ -193,8 +194,23 @@ verif((c28["heure"], c28["fin"], c28["duree"], c28["heures"]) == ("07:00", "12:0
 verif(c28["techniciens"] == ["Paul Martin", "Jean Durand", "Zoe Aubert"] and c28["sans_compte"] == ["LUC"],
       "techniciens InterFast par leur nom complet ; celui sans compte est nommé, pas oublié")
 verif(e["pretes"] == 1 and e["heures_pretes"] == 17.0, "le total prêt est compté")
+# L'essai (30/09/2026) : avant l'interrupteur, seule l'affaire de test peut
+# partir — CH00066 par défaut pour VIP Plus. CH00901 n'en est pas.
+verif(e["essai"] == ["CH00066"] and c28["ecriture"] is False and e["ecriture"] is False,
+      f"l'affaire d'essai par défaut est CH00066 ; la case de CH00901 ne peut pas partir : {e['essai']}")
+r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28"})
+verif(r.status_code == 200 and r.json()["posees"] == [] and "hors essai" in r.json()["echecs"][0]["erreur"],
+      f"hors essai : la case est refusée, avec la raison, et rien n'est tenté : {r.text}")
+try:
+    asyncio.run(interfast.poser_case(c28))
+    verif(False, "poser_case a laissé partir une case hors essai")
+except interfast.EcritureCoupee as err:
+    verif("CH00066" in str(err), "la garde tient aussi au plus près d'InterFast, et dit quelle affaire est en essai")
+os.environ["RHI_ECRITURE_ESSAI"] = ""
 verif(c.post("/api/interfast/envois", json={"semaine": "2026-09-28"}).status_code == 403,
-      "écriture coupée : l'envoi est refusé, rien n'est tenté")
+      "sans affaire d'essai : écriture coupée, l'envoi est refusé, rien n'est tenté")
+verif(c.get("/api/sante/detail").json()["interfast_essai"] == [], "la santé dit qu'aucune affaire n'est en essai")
+os.environ.pop("RHI_ECRITURE_ESSAI")
 
 # La pause : le temps passé ailleurs entre deux morceaux du même CH.
 verif(c.post("/api/pointages", json={"personne": "JEAN", "ch": "CH00901", "debut": "2026-10-07T07:00",
@@ -216,7 +232,6 @@ verif(base.duree_texte(4.5) == "4h30" and base.duree_texte(2) == "2h" and base.d
       "durées au format d'InterFast")
 
 # ── Écriture branchée, sur un faux InterFast ──
-from rhi import interfast  # noqa: E402
 ecrits = []
 terminee = {"oui": False}
 
@@ -272,11 +287,18 @@ def mcp_ecriture(req: httpx.Request) -> httpx.Response:
 
 
 appli.app.state.transport_interfast = httpx.MockTransport(mcp_ecriture)
-interfast.ECRITURE = True
+# Le premier envoi se fait EN ESSAI, interrupteur baissé : CH00901 devient
+# l'affaire de test, et c'est elle seule qui part.
+os.environ["RHI_ECRITURE_ESSAI"] = "ch00901"
 try:
+    verif({x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-09-28").json()["cases"]}
+          ["CH00901|2026-09-28"]["ecriture"] is True, "l'affaire d'essai peut partir (casse indifférente)")
     r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28"})
     verif(r.status_code == 200 and r.json()["posees"] == [{"id": "CH00901|2026-09-28", "ref": "IN00321"}],
-          f"la case prête est posée et sa référence rendue : {r.text}")
+          f"en essai, la case prête est posée et sa référence rendue : {r.text}")
+    verif(interfast.ECRITURE is False, "l'interrupteur, lui, n'a pas bougé")
+    os.environ.pop("RHI_ECRITURE_ESSAI")
+    interfast.ECRITURE = True
     verif([n for n, _ in ecrits] == ["planifier_intervention", "confirmer_action"], f"deux temps : {ecrits}")
     plan = ecrits[0][1]
     verif(plan == {"client": "BAILLEUR SUD", "chantier": "Résidence des Pins", "date": "2026-09-28",
