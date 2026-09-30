@@ -155,6 +155,22 @@ CREATE TABLE IF NOT EXISTS controles_ch (
   le TEXT NOT NULL,
   PRIMARY KEY (ch, lundi)
 );
+-- Le reste à faire (Alexis, 30/09/2026) : le chargé d'affaires l'estime,
+-- en heures ; engagé + reste face au chiffrage dit le dérapage avant la fin
+-- du chantier. On garde chaque estimation (jamais d'UPDATE) : voir une
+-- affaire dont le reste ne baisse jamais vaut autant que le chiffre du jour.
+-- `engage` fige les heures pointées au moment de l'estimation, pour
+-- décompter ensuite ce qui a été pointé depuis.
+CREATE TABLE IF NOT EXISTS restes (
+  id INTEGER PRIMARY KEY,
+  ch TEXT NOT NULL,
+  le TEXT NOT NULL,
+  par TEXT NOT NULL,
+  heures REAL NOT NULL,
+  engage REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS restes_ch ON restes(ch, le);
 CREATE TABLE IF NOT EXISTS planning (
   personne TEXT NOT NULL,
   jour TEXT NOT NULL,
@@ -255,7 +271,10 @@ AJOUTS = {
     "affaires": [("client", "TEXT NOT NULL DEFAULT ''"), ("titre", "TEXT NOT NULL DEFAULT ''"),
                  ("statut", "TEXT NOT NULL DEFAULT ''"), ("interfast_id", "INTEGER"),
                  # Vendu HT : devis signés/payés dont le titre porte le CH (NULL = non trouvé).
-                 ("vendu_ht", "REAL"), ("devis_refs", "TEXT NOT NULL DEFAULT ''"), ("vendu_maj", "TEXT")],
+                 ("vendu_ht", "REAL"), ("devis_refs", "TEXT NOT NULL DEFAULT ''"), ("vendu_maj", "TEXT"),
+                 # Heures vendues au chiffrage, saisies par le chargé d'affaires :
+                 # le plan de charge ne chiffre que la fab, pas la pose.
+                 ("heures_chiffrees", "REAL")],
     "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
                   ("cout_interfast", "REAL"), ("cout_horaire", "REAL"),
                   # Ajouté au bureau (RH), pas venu d'un planning : un intérimaire.
@@ -1091,7 +1110,83 @@ def point_affaire(db, ch: str, a: dt.datetime) -> dict:
         "par_semaine": {k: round(v, 2) for k, v in sorted(par_semaine.items())},
         "lignes_prevues": [dict(r) for r in db.execute(
             "SELECT designation, heures FROM lignes_prevues WHERE ch=?", (ch,))],
+        "reste_a_faire": reste_a_faire(db, ch, a, total),
     }
+
+
+SEUIL_DERIVE_PCT = 110       # au-delà : rouge ; entre 100 et 110 : ambre
+
+
+def _engage(db, ch: str, a: dt.datetime) -> float:
+    """Heures pointées sur le CH, hors arrêts oubliés (comme le point d'affaire)."""
+    total = 0.0
+    for r in db.execute("SELECT * FROM pointages WHERE ch=? AND annule=0", (ch,)):
+        p = dict(r)
+        if not _suspendu(p, a):
+            total += _heures(p, a)
+    return total
+
+
+def estimer_reste(db, ch: str, heures, par: str, a: dt.datetime, note: str = "",
+                  chiffrees=None) -> dict:
+    """Le chargé d'affaires dit combien d'heures il reste. Optionnellement, il
+    donne aussi les heures vendues au chiffrage (une fois suffit)."""
+    par = (par or "").strip()
+    if not par:
+        raise ValueError("Une estimation se signe : qui l'a faite ?")
+    try:
+        heures = float(heures)
+    except (TypeError, ValueError):
+        raise ValueError("Le reste à faire est un nombre d'heures")
+    if not 0 <= heures <= 100000:
+        raise ValueError("Le reste à faire est un nombre d'heures positif")
+    if chiffrees not in (None, ""):
+        chiffrees = float(chiffrees)
+        if not 0 < chiffrees <= 100000:
+            raise ValueError("Les heures chiffrées sont un nombre positif")
+    with db:
+        db.execute("""INSERT INTO affaires(ch, source, maj) VALUES (?, 'tablette', ?)
+                      ON CONFLICT(ch) DO NOTHING""", (ch, a.isoformat(timespec="seconds")))
+        db.execute("INSERT INTO restes(ch, le, par, heures, engage, note) VALUES (?,?,?,?,?,?)",
+                   (ch, a.isoformat(timespec="seconds"), par[:40], round(heures, 2),
+                    round(_engage(db, ch, a), 2), (note or "").strip()[:200]))
+        if chiffrees not in (None, ""):
+            db.execute("UPDATE affaires SET heures_chiffrees=? WHERE ch=?", (round(chiffrees, 2), ch))
+    return reste_a_faire(db, ch, a)
+
+
+def reste_a_faire(db, ch: str, a: dt.datetime, engage: float = None) -> dict:
+    """Engagé + reste face au chiffrage : le dérapage, vu avant la fin.
+
+    Le reste estimé fond à mesure qu'on pointe : 40 h estimées lundi, 10 h
+    pointées depuis, il en reste 30. S'il est tout consommé, le projeté suit
+    l'engagé et l'estimation est dite « dépassée » — à refaire."""
+    aff = db.execute("SELECT heures_prevues, heures_chiffrees FROM affaires WHERE ch=?", (ch,)).fetchone()
+    engage = _engage(db, ch, a) if engage is None else engage
+    chiffrees = aff["heures_chiffrees"] if aff else None
+    prevues = aff["heures_prevues"] if aff else None
+    reference = chiffrees or prevues
+    histo = [dict(r) for r in db.execute(
+        "SELECT le, par, heures, engage, note FROM restes WHERE ch=? ORDER BY le DESC, id DESC", (ch,))]
+    sortie = {"engage": round(engage, 2), "heures_chiffrees": chiffrees,
+              "reference": reference,
+              "reference_nature": "chiffrage" if chiffrees else "prévu fab" if prevues else None,
+              "estimation": histo[0] if histo else None, "historique": histo[:10],
+              "reste": None, "projete": None, "ecart": None, "derive_pct": None,
+              "niveau": None, "depassee": False, "pointe_depuis": None}
+    if not histo:
+        return sortie
+    e = histo[0]
+    depuis = max(0.0, engage - e["engage"])
+    reste = max(0.0, e["heures"] - depuis)
+    projete = engage + reste
+    sortie.update(reste=round(reste, 2), projete=round(projete, 2), pointe_depuis=round(depuis, 2),
+                  depassee=depuis > e["heures"])
+    if reference:
+        pct = round(100 * projete / reference)
+        sortie.update(ecart=round(projete - reference, 2), derive_pct=pct,
+                      niveau="rouge" if pct > SEUIL_DERIVE_PCT else "ambre" if pct > 100 else "vert")
+    return sortie
 
 
 def affaires_pointees(db, a: dt.datetime) -> list:
@@ -1108,9 +1203,13 @@ def affaires_pointees(db, a: dt.datetime) -> list:
     sortie = []
     for r in db.execute("SELECT * FROM affaires"):
         h = reelles.get(r["ch"], 0.0)
-        if not h and not r["heures_prevues"]:
+        if not h and not r["heures_prevues"] and not r["heures_chiffrees"]:
             continue
-        sortie.append({"ch": r["ch"], "chantier": r["chantier"], "conduc": r["conduc"],
+        raf = reste_a_faire(db, r["ch"], a, h)
+        sortie.append({"reste": raf["reste"], "projete": raf["projete"], "derive_pct": raf["derive_pct"],
+                       "niveau": raf["niveau"], "depassee": raf["depassee"],
+                       "heures_chiffrees": r["heures_chiffrees"],
+                       "estime_le": raf["estimation"]["le"] if raf["estimation"] else None,"ch": r["ch"], "chantier": r["chantier"], "conduc": r["conduc"],
                        "source": r["source"], "heures_reelles": round(h, 2),
                        "client": r["client"], "cout_main_oeuvre": round(cout.get(r["ch"], 0), 2),
                        "vendu_ht": r["vendu_ht"],

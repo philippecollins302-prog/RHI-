@@ -285,9 +285,11 @@ async function ongletAffaires() {
   const liste = await api('/api/affaires');
   $('#vue').innerHTML = `
     <p class="doux">Heures réelles pointées face aux heures prévues du plan de charge atelier
-      (fabrication seulement : la pose n'a pas de prévu chiffré dans les plannings).</p>
+      (fabrication seulement : la pose n'a pas de prévu chiffré dans les plannings).
+      <strong>Projeté</strong> = heures engagées + reste à faire estimé par le chargé d'affaires,
+      face au chiffrage (ou, à défaut, au prévu fab). Cliquer un CH pour estimer son reste.</p>
     <div class="defile"><table>
-      <tr><th>CH</th><th>Chantier</th><th>Client</th><th>Conduc.</th><th class="n">Réel</th><th class="n">Prévu fab</th><th class="n">Consommé</th><th class="n">Coût MO</th><th class="n">Vendu HT</th><th class="n">MO / vendu</th></tr>
+      <tr><th>CH</th><th>Chantier</th><th>Client</th><th>Conduc.</th><th class="n">Réel</th><th class="n">Prévu fab</th><th class="n">Consommé</th><th class="n">Reste</th><th class="n">Projeté</th><th class="n">Coût MO</th><th class="n">Vendu HT</th><th class="n">MO / vendu</th></tr>
       ${liste.map((a) => {
         const p = a.consomme_pct;
         const cl = p === null ? '' : p > 100 ? 'p-rouge' : p > 80 ? 'p-ambre' : 'p-vert';
@@ -295,6 +297,8 @@ async function ongletAffaires() {
           <td class="doux">${esc(a.client || '')}</td><td>${esc(a.conduc)}</td><td class="n">${heures(a.heures_reelles) || '—'}</td>
           <td class="n">${a.heures_prevues ? heures(a.heures_prevues) : '—'}</td>
           <td class="n">${p === null ? '' : `<span class="pastille ${cl}">${esc(p)} %</span>`}</td>
+          <td class="n">${a.reste === null ? '<span class="doux">—</span>' : heures(a.reste) || '0h'}${a.depassee ? ' <span class="pastille p-ambre">dépassé</span>' : ''}</td>
+          <td class="n">${a.projete === null ? '' : a.niveau ? `<span class="pastille ${esc(PASTILLE_DERIVE[a.niveau])}">${esc(a.derive_pct)} %</span>` : heures(a.projete)}</td>
           <td class="n">${a.cout_main_oeuvre ? euros(a.cout_main_oeuvre) : ''}</td>
           <td class="n">${a.vendu_ht ? euros(a.vendu_ht) : '<span class="doux">—</span>'}</td>
           <td class="n">${a.part_mo_pct === null ? '' : esc(String(a.part_mo_pct).replace('.', ',')) + ' %'}</td></tr>`;
@@ -302,25 +306,71 @@ async function ongletAffaires() {
     </table></div><div id="detail"></div>`;
   document.querySelectorAll('[data-ch]').forEach((a) => a.onclick = async (e) => {
     e.preventDefault();
-    const d = await api('/api/affaires/' + a.dataset.ch);
-    $('#detail').innerHTML = `<div class="carte" style="margin-top:16px">
-      <div class="ch">${esc(d.ch)}</div><strong style="font-size:20px">${esc(d.chantier)}</strong>
-      <p>${heures(d.heures_reelles) || '0h'} pointées${d.heures_prevues ? ' sur ' + heures(d.heures_prevues) + ' prévues' : ''}.
-        ${d.cout_main_oeuvre ? `<br>Coût main-d'œuvre : <strong>${euros(d.cout_main_oeuvre)}</strong>` : ''}
-        ${d.vendu_ht ? `<br>Vendu HT (devis signés ou payés ${esc(d.devis_refs)}) : <strong>${euros(d.vendu_ht)}</strong>`
-          : '<br><span class="doux">Vendu HT : aucun devis signé portant ce CH dans InterFast</span>'}
-        ${d.sans_cout.length ? `<br><span class="pastille p-ambre">Sans coût horaire (non chiffrés) : ${esc(d.sans_cout.join(', '))}</span>` : ''}
-        ${d.heures_en_suspens ? `<span class="pastille p-ambre">${heures(d.heures_en_suspens)} en suspens : arrêt oublié à corriger (onglet À vérifier)</span>` : ''}</p>
-      <div class="ligne" style="align-items:flex-start">
-        <table><tr><th>Qui</th><th class="n">Heures</th></tr>${Object.entries(d.par_personne).map(([k, v]) =>
-          `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
-        <table><tr><th>Semaine</th><th class="n">Heures</th></tr>${Object.entries(d.par_semaine).map(([k, v]) =>
-          `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
-        <table><tr><th>Prévu au plan de charge</th><th class="n">h</th></tr>${d.lignes_prevues.map((l) =>
-          `<tr><td>${esc(l.designation)}</td><td class="n">${l.heures ?? '—'}</td></tr>`).join('')}</table>
-      </div></div>`;
-    $('#detail').scrollIntoView();
+    afficherAffaire(a.dataset.ch);
   });
+}
+
+const PASTILLE_DERIVE = {vert: 'p-vert', ambre: 'p-ambre', rouge: 'p-rouge'};
+
+function blocReste(d) {
+  const r = d.reste_a_faire;
+  const e = r.estimation;
+  return `<div class="carte" style="margin-top:12px">
+    <strong>Reste à faire</strong>
+    <p>Engagé : <strong>${heures(r.engage) || '0h'}</strong> · Référence : ${r.reference ? `${heures(r.reference)} (${esc(r.reference_nature)})` : '<span class="doux">aucune référence : saisir les heures chiffrées</span>'}
+      ${e ? `<br>Estimé le ${esc(e.le.slice(8, 10) + '/' + e.le.slice(5, 7))} par ${esc(e.par)} : ${heures(e.heures) || '0h'}
+        — ${heures(r.pointe_depuis) || '0h'} pointées depuis, reste <strong>${heures(r.reste) || '0h'}</strong>
+        ${r.depassee ? ' <span class="pastille p-ambre">estimation dépassée : à refaire</span>' : ''}
+        <br>Projeté : <strong>${heures(r.projete) || '0h'}</strong>
+        ${r.niveau ? ` <span class="pastille ${esc(PASTILLE_DERIVE[r.niveau])}">${esc(r.derive_pct)} % — écart ${r.ecart > 0 ? '+' : ''}${esc(String(r.ecart).replace('.', ','))} h</span>` : ''}`
+        : '<br><span class="doux">Pas encore estimé.</span>'}</p>
+    <div class="ligne">
+      <label>Reste (h) <input id="raf-heures" type="number" min="0" step="0.5" style="width:90px"></label>
+      <label>Heures chiffrées <input id="raf-chiffrees" type="number" min="0" step="0.5" style="width:90px" value="${esc(r.heures_chiffrees ?? '')}"></label>
+      <label>Qui <input id="raf-qui" style="width:70px" value="${esc(lire('rhi.conduc', '') || d.conduc || '')}"></label>
+      <label>Note <input id="raf-note" style="width:220px" maxlength="200"></label>
+      <button id="raf-ok">Enregistrer l'estimation</button>
+    </div>
+    ${r.historique.length > 1 ? `<details><summary class="doux">Estimations précédentes</summary><table>
+      <tr><th>Le</th><th>Qui</th><th class="n">Engagé</th><th class="n">Reste</th><th>Note</th></tr>
+      ${r.historique.map((h) => `<tr><td>${esc(h.le.slice(0, 10))}</td><td>${esc(h.par)}</td>
+        <td class="n">${heures(h.engage) || '0h'}</td><td class="n">${heures(h.heures) || '0h'}</td><td class="doux">${esc(h.note)}</td></tr>`).join('')}
+    </table></details>` : ''}
+  </div>`;
+}
+
+async function afficherAffaire(ch) {
+  const d = await api('/api/affaires/' + ch);
+  $('#detail').innerHTML = `<div class="carte" style="margin-top:16px">
+    <div class="ch">${esc(d.ch)}</div><strong style="font-size:20px">${esc(d.chantier)}</strong>
+    <p>${heures(d.heures_reelles) || '0h'} pointées${d.heures_prevues ? ' sur ' + heures(d.heures_prevues) + ' prévues' : ''}.
+      ${d.cout_main_oeuvre ? `<br>Coût main-d'œuvre : <strong>${euros(d.cout_main_oeuvre)}</strong>` : ''}
+      ${d.vendu_ht ? `<br>Vendu HT (devis signés ou payés ${esc(d.devis_refs)}) : <strong>${euros(d.vendu_ht)}</strong>`
+        : '<br><span class="doux">Vendu HT : aucun devis signé portant ce CH dans InterFast</span>'}
+      ${d.sans_cout.length ? `<br><span class="pastille p-ambre">Sans coût horaire (non chiffrés) : ${esc(d.sans_cout.join(', '))}</span>` : ''}
+      ${d.heures_en_suspens ? `<span class="pastille p-ambre">${heures(d.heures_en_suspens)} en suspens : arrêt oublié à corriger (onglet À vérifier)</span>` : ''}</p>
+    <div class="ligne" style="align-items:flex-start">
+      <table><tr><th>Qui</th><th class="n">Heures</th></tr>${Object.entries(d.par_personne).map(([k, v]) =>
+        `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
+      <table><tr><th>Semaine</th><th class="n">Heures</th></tr>${Object.entries(d.par_semaine).map(([k, v]) =>
+        `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
+      <table><tr><th>Prévu au plan de charge</th><th class="n">h</th></tr>${d.lignes_prevues.map((l) =>
+        `<tr><td>${esc(l.designation)}</td><td class="n">${l.heures ?? '—'}</td></tr>`).join('')}</table>
+    </div></div>`;
+  $('#detail .carte').insertAdjacentHTML('beforeend', blocReste(d));
+  $('#raf-ok').onclick = async () => {
+    const heuresReste = $('#raf-heures').value;
+    if (heuresReste === '') { dire('Indiquer le reste à faire, en heures'); return; }
+    const corps = {heures: Number(heuresReste), qui: $('#raf-qui').value.trim(), note: $('#raf-note').value};
+    if ($('#raf-chiffrees').value !== '') corps.chiffrees = Number($('#raf-chiffrees').value);
+    try {
+      await api('/api/affaires/' + encodeURIComponent(d.ch) + '/reste', {method: 'POST', json: corps});
+      dire('Estimation enregistrée');
+      await ongletAffaires();
+      afficherAffaire(d.ch);
+    } catch (e) { dire(e.message); }
+  };
+  $('#detail').scrollIntoView();
 }
 
 // ── En ce moment : qui pointe sur quoi ──
