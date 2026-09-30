@@ -11,11 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       geste:
-        description: "etat · courrier (recopie SMTP d'Ali Baba) · redemarrer"
+        description: "etat · courrier (recopie SMTP d'Ali Baba) · nettoyer · redemarrer"
         required: true
         default: etat
         type: choice
-        options: [etat, courrier, redemarrer]
+        options: [etat, courrier, nettoyer, redemarrer]
 
 permissions:
   contents: read
