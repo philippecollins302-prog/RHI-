@@ -372,13 +372,18 @@ async function ongletPersonnes() {
     <div class="carte">
       <p>Le coût horaire chiffre le point d'affaire. Priorité : celui saisi ici, sinon celui d'InterFast
         (s'il n'est pas à 0), sinon le taux moyen ${d.cout_defaut ? `(<strong>${euros(d.cout_defaut)}</strong>/h)` : '(non réglé : variable RHI_COUT_HORAIRE)'}.</p>
+      <p><strong>Ajouter une personne</strong> (un intérimaire) : elle apparaît aussitôt sur les tablettes.</p>
+      <input id="nouveau-nom" placeholder="NOM Prénom" maxlength="40" style="width:220px">
+      <select id="nouveau-equipe"><option>atelier</option><option>pose</option></select>
+      <button id="ajouter-personne">Ajouter</button>
+      <hr>
       <button id="relire">Relire les comptes InterFast</button> <span class="doux">(une minute : InterFast est lu un compte à la fois)</span>
       <div id="rapport" style="margin-top:12px"></div>
     </div>
     <div class="defile"><table>
       <tr><th>Nom (planning)</th><th>Équipe</th><th>Actif</th><th>Compte InterFast</th><th class="n">Coût saisi €/h</th><th class="n">Retenu</th></tr>
       ${d.personnes.map((p) => `<tr data-nom="${esc(p.nom)}">
-        <td><strong>${esc(p.nom)}</strong><br><span class="doux">${esc(p.nom_complet)}</span></td>
+        <td><strong>${esc(p.nom)}</strong>${p.interim ? ' <span class="pastille p-ambre">intérim</span>' : ''}<br><span class="doux">${esc(p.nom_complet)}</span></td>
         <td><select data-champ="equipe"><option ${p.equipe === 'atelier' ? 'selected' : ''}>atelier</option>
           <option ${p.equipe === 'pose' ? 'selected' : ''}>pose</option></select></td>
         <td><input type="checkbox" data-champ="actif" ${p.actif ? 'checked' : ''} style="width:auto"></td>
@@ -387,6 +392,12 @@ async function ongletPersonnes() {
         <td class="n">${p.cout_retenu ? euros(p.cout_retenu) : '<span class="pastille p-ambre">aucun</span>'}</td>
       </tr>`).join('')}
     </table></div>`;
+  $('#ajouter-personne').onclick = async () => {
+    try {
+      const r = await api('/api/personnes', {method: 'POST', json: {nom: $('#nouveau-nom').value, equipe: $('#nouveau-equipe').value}});
+      dire(r.deja ? r.nom + ' était déjà connu : réactivé' : r.nom + ' ajouté aux tablettes'); afficher();
+    } catch (e) { dire(e.message); }
+  };
   document.querySelectorAll('tr[data-nom] [data-champ]').forEach((champ) => champ.onchange = async () => {
     const nom = champ.closest('tr').dataset.nom;
     const corps = {

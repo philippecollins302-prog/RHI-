@@ -467,6 +467,19 @@ class Personne(BaseModel):
     delier: bool = False
 
 
+class NouvellePersonne(BaseModel):
+    nom: str = Field(max_length=60)
+    equipe: str = "atelier"
+
+
+@app.post("/api/personnes", dependencies=[Depends(acces_bureau)])
+def api_ajouter_personne(p: NouvellePersonne, c=Depends(db)):
+    try:
+        return base.ajouter_personne(c, p.nom, p.equipe, maintenant())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @app.get("/api/personnes/detail", dependencies=[Depends(acces_bureau)])
 def api_personnes_detail(c=Depends(db)):
     return {"cout_defaut": base.cout_defaut(), "personnes": base.personnes_detail(c)}

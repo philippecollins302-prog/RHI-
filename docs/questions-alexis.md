@@ -88,14 +88,14 @@ Personnes de RHI.*
 |---|---|---|
 | Qui pointe à l'atelier | Quatre permanents, plus le plieur, qui pointe sur CH | — |
 | Tablettes | **Cinq** à l'atelier (le plieur compris). Wi-Fi à vérifier : le réseau passe mal au BET | à l'achat |
-| Intérimaires | Pointent sous leur nom sur les tablettes des permanents ; les RH ajoutent les noms (qui exactement : à trancher chez eux) | à faire |
+| Intérimaires | Pointent sous leur nom sur les tablettes des permanents ; les RH ajoutent les noms (qui exactement : à trancher chez eux) | **fait** (bureau → Personnes, `banc-interim`) |
 | Pose | Chaque poseur fait son RHI aujourd'hui ; demain, le téléphone du chef d'équipe pour lui et son binôme | déjà ainsi |
 | Précision | Au CH, pas à l'ouvrage (l'ouvrage, plus tard, pour le retour d'expérience du chiffrage) | déjà ainsi |
-| Pliage, débit, plasma | Toujours sur un CH | à faire |
+| Pliage, débit, plasma | Toujours sur un CH | déjà ainsi : la tablette n'offre pas de pointage sans CH hors des motifs |
 | Motifs | Rangement, entretien machine, formation, autre (à valider) — tous sur le CH des frais généraux | **fait** (`banc-motifs`) |
 | CH des frais généraux | `CH00081` (« CH FG SER ») | **fait** (`RHI_CH_FRAIS_GENERAUX`) |
 | Trajet | Compté dans le chantier : départ pointé, retour du soir sur le dernier chantier | **fait** (plus un motif) |
-| Sans numéro d'affaire | Un « CH DIVERS », à créer dans InterFast, avec transfert des heures vers le bon CH | à faire |
+| Sans numéro d'affaire | Un « CH DIVERS », à créer dans InterFast, avec transfert des heures vers le bon CH | **fait** dès son numéro réglé (`RHI_CH_DIVERS`) ; transfert depuis « À vérifier » |
 | Validation | Chaque chargé d'affaires vérifie ses chantiers et la cohérence avec le planning ; le responsable de BU vérifie le planning final général | à faire |
 | Chargés d'affaires | Normalement renseignés sur chaque chantier dans InterFast (à vérifier) ; trois noms sinon | à lire dans InterFast |
 | Point d'affaire | InterFast doit porter toutes les heures engagées ; le chargé d'affaires estime le reste à faire ; engagé + reste face au chiffrage = dérapage | à faire |
