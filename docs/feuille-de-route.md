@@ -23,8 +23,9 @@ prévu du plan de charge, import des plannings ATE et POSE SER.
   ~~motifs sur le CH des frais généraux, trajet dans le chantier~~ (fait) ;
   ~~CH DIVERS, ajout d'intérimaires~~ (fait, reste à créer le CH DIVERS dans
   InterFast) ; ~~validation par chargé d'affaires puis par le responsable
-  de BU~~ (fait, `banc-controles`) ; reste le transfert d'heures, les tâches
-  sans CH, et le reste à faire estimé au point d'affaire.
+  de BU~~ (fait, `banc-controles`) ; ~~le reste à faire estimé au point
+  d'affaire~~ (fait, `banc-reste`) ; reste le transfert d'heures du CH
+  DIVERS et les tâches sans CH.
 
 ## V1.2 — InterFast
 1. ~~Trouver les outils avec la vraie clé~~ — fait le 29/09/2026, voir

@@ -414,6 +414,22 @@ def api_affaire(ch: str, c=Depends(db)):
     return base.point_affaire(c, ch.upper(), maintenant())
 
 
+class Reste(BaseModel):
+    heures: float
+    qui: str
+    note: str = ""
+    chiffrees: float | None = None
+
+
+@app.post("/api/affaires/{ch}/reste", dependencies=[Depends(acces_bureau)])
+def api_reste(ch: str, r: Reste, c=Depends(db)):
+    """Le reste à faire estimé par le chargé d'affaires (Alexis, 30/09/2026)."""
+    try:
+        return base.estimer_reste(c, ch.upper(), r.heures, r.qui, maintenant(), r.note, r.chiffrees)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 class Correction(BaseModel):
     ch: str | None = None
     motif: str | None = None
