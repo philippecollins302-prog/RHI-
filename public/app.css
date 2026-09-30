@@ -49,6 +49,7 @@ input, select { font: inherit; padding: 12px; border-radius: 12px; border: 1px s
 .message.visible { display: block; }
 /* Bureau */
 nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+nav .groupe { align-self: center; font-weight: 700; min-width: 90px; color: var(--gris, #666); }
 nav button.actif { background: var(--vert); color: #fff; border-color: var(--vert); }
 table { border-collapse: collapse; width: 100%; background: var(--carte); font-size: 15px; }
 th, td { padding: 8px; border-bottom: 1px solid var(--trait); text-align: left; vertical-align: top; }

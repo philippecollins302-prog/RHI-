@@ -46,12 +46,56 @@ async function afficher() {
     b.classList.toggle('actif', b.dataset.onglet === vue.onglet));
   $('#vue').innerHTML = '<p class="doux">Chargement…</p>';
   try {
-    await ({rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
+    await ({chantiers: ongletChantiers, rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
             direct: ongletDirect, plannings: ongletPlannings,
             personnes: ongletPersonnes, envois: ongletEnvois, marche: ongletMarche}[vue.onglet] || ongletRhi)();
   } catch (e) {
     $('#vue').innerHTML = `<div class="rien">Erreur : ${esc(e.message)}</div>`;
   }
+}
+
+// ── Mes chantiers : le premier étage, le contrôle du chargé d'affaires ──
+async function ongletChantiers() {
+  const moi = lire('rhi.conduc', '');
+  const d = await api('/api/chantiers?semaine=' + vue.semaine + (moi ? '&conduc=' + encodeURIComponent(moi) : ''));
+  const jour = (iso) => JOURS[(new Date(iso + 'T12:00:00').getDay() + 6) % 7];
+  $('#vue').innerHTML = choixSemaine() + `
+    <div class="carte">
+      <label>Chargé d'affaires <select id="conduc"><option value="">— tous —</option>
+        ${d.conducs.map((c) => `<option ${c === moi ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+      <span class="doux">Chacun contrôle ses chantiers ; le responsable de BU valide ensuite les RHI.</span>
+      ${d.a_controler ? `<span class="pastille p-ambre">${esc(d.a_controler)} à contrôler</span>` : '<span class="pastille p-vert">tout est contrôlé</span>'}
+    </div>` + (d.chantiers.length ? d.chantiers.map((c) => `
+    <div class="carte">
+      <span class="ch">${esc(c.ch)}</span> <strong>${esc(c.chantier || '—')}</strong>
+      <span class="doux">· ${esc(c.conduc || 'sans chargé connu')} · ${heures(c.total)}</span>
+      ${c.controle
+        ? `<span class="pastille p-vert">✓ contrôlé par ${esc(c.controle.par)} le ${esc(c.controle.le.slice(0, 10))}</span>
+           <button data-decontroler="${esc(c.ch)}">Retirer</button>`
+        : `<button data-controler="${esc(c.ch)}">✓ Heures contrôlées</button>`}
+      ${c.ouverts ? `<span class="pastille p-ambre">${esc(c.ouverts)} pointage(s) ouvert(s)</span>` : ''}
+      <div class="defile"><table>
+        <tr><th>Qui</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
+        ${c.gens.map((g) => `<tr><td>${esc(g.personne)}</td>${g.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}
+          <td class="n"><strong>${heures(g.total)}</strong></td></tr>`).join('')}
+      </table></div>
+      ${c.hors_planning.map((x) => `<span class="pastille p-ambre">${esc(x.personne)} pointé ${esc(jour(x.jour))} sans être au planning</span>`).join(' ')}
+      ${c.prevu_non_pointe.map((x) => `<span class="pastille p-ambre">${esc(x.personne)} prévu ${esc(jour(x.jour))}, rien pointé ici</span>`).join(' ')}
+    </div>`).join('') : '<div class="rien">Aucun chantier pointé cette semaine.</div>');
+  brancherSemaine();
+  $('#conduc').onchange = () => { ecrire('rhi.conduc', $('#conduc').value); afficher(); };
+  document.querySelectorAll('[data-controler]').forEach((b) => b.onclick = async () => {
+    const qui = ($('#conduc').value || lire('rhi.qui', '') || prompt('Vos initiales (elles signent le contrôle) :') || '').trim();
+    if (!qui) return;
+    try { await api('/api/controles', {method: 'POST', json: {ch: b.dataset.controler, semaine: vue.semaine, qui}}); afficher(); }
+    catch (e) { dire(e.message); }
+  });
+  document.querySelectorAll('[data-decontroler]').forEach((b) => b.onclick = async () => {
+    try {
+      await api('/api/controles?ch=' + encodeURIComponent(b.dataset.decontroler) + '&semaine=' + vue.semaine, {method: 'DELETE'});
+      afficher();
+    } catch (e) { dire(e.message); }
+  });
 }
 
 // ── RHI : une carte par personne, une ligne par CH, une colonne par jour ──
@@ -88,7 +132,9 @@ async function ongletRhi() {
         : `<button data-valider="${esc(r.personne)}">Valider la semaine</button>`}
       <div class="defile"><table>
         <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
-        ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || l.ch_impute || '—')}</td><td>${esc(l.libelle)}</td>
+        ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || l.ch_impute || '—')}</td><td>${esc(l.libelle)}
+          ${l.controle ? `<span class="pastille p-vert" title="contrôlé par ${esc(l.controle.par)}">✓ ${esc(l.controle.par)}</span>`
+            : l.conduc ? `<span class="pastille p-ambre">à contrôler (${esc(l.conduc)})</span>` : ''}</td>
           ${l.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n"><strong>${heures(l.total)}</strong></td></tr>`).join('')}
         <tr class="total"><td></td><td>Total</td>${r.par_jour.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(r.total)}</td></tr>
       </table></div>

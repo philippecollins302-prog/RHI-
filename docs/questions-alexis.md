@@ -96,7 +96,7 @@ Personnes de RHI.*
 | CH des frais généraux | `CH00081` (« CH FG SER ») | **fait** (`RHI_CH_FRAIS_GENERAUX`) |
 | Trajet | Compté dans le chantier : départ pointé, retour du soir sur le dernier chantier | **fait** (plus un motif) |
 | Sans numéro d'affaire | Un « CH DIVERS », à créer dans InterFast, avec transfert des heures vers le bon CH | **fait** dès son numéro réglé (`RHI_CH_DIVERS`) ; transfert depuis « À vérifier » |
-| Validation | Chaque chargé d'affaires vérifie ses chantiers et la cohérence avec le planning ; le responsable de BU vérifie le planning final général | à faire |
+| Validation | Chaque chargé d'affaires vérifie ses chantiers et la cohérence avec le planning ; le responsable de BU vérifie le planning final général | **fait** : onglet « Mes chantiers », puis validation (`banc-controles`) |
 | Chargés d'affaires | Normalement renseignés sur chaque chantier dans InterFast (à vérifier) ; trois noms sinon | à lire dans InterFast |
 | Point d'affaire | InterFast doit porter toutes les heures engagées ; le chargé d'affaires estime le reste à faire ; engagé + reste face au chiffrage = dérapage | à faire |
 | Taux | Un taux atelier et un taux pose, bibliothèque InterFast ; **ce sont les heures qui comptent**, pas le taux | le coût reste secondaire |

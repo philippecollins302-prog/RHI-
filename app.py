@@ -712,6 +712,34 @@ async def api_suivi(semaine: str, c=Depends(db)):
             "ecarts": [x["ref"] for x in d["cases"] if x["etat"] == "écart"]}
 
 
+@app.get("/api/chantiers", dependencies=[Depends(acces_bureau)])
+def api_chantiers(semaine: str | None = None, conduc: str | None = None, c=Depends(db)):
+    return base.chantiers_semaine(c, _lundi(semaine), maintenant(), conduc or None)
+
+
+class Controle(BaseModel):
+    ch: str
+    semaine: str
+    qui: str = Field(max_length=60)
+
+
+@app.post("/api/controles", dependencies=[Depends(acces_bureau)])
+def api_controler(k: Controle, c=Depends(db)):
+    try:
+        return base.controler_ch(c, k.ch.upper(), _lundi(k.semaine), k.qui, maintenant())
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.delete("/api/controles", dependencies=[Depends(acces_bureau)])
+def api_decontroler(ch: str, semaine: str, c=Depends(db)):
+    try:
+        base.decontroler_ch(c, ch.upper(), _lundi(semaine))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
 class Validation(BaseModel):
     personne: str
     semaine: str
