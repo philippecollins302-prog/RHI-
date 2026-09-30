@@ -6,111 +6,227 @@
 <title>RHI · Mode d'emploi</title>
 <link rel="stylesheet" href="app.css">
 <style>
-  main { max-width: 820px; }
-  h2 { color: var(--texte); font-size: 22px; text-transform: none; letter-spacing: 0; margin-top: 32px; }
-  ol li, ul li { margin-bottom: 8px; }
-  .geste { font-size: 22px; font-weight: 700; }
-  @media print { header { background: none; color: #000; } a { color: #000; } }
+  /* Le manuel se lit debout, sur un téléphone, par quelqu'un qui n'a jamais vu
+     l'app : une étape = un geste en gros + la capture de l'écran qu'il verra.
+     Les captures (public/aide/) sont faites sur des données inventées. */
+  main { max-width: 860px; padding-bottom: 60px; }
+  h2 { color: var(--texte); font-size: 24px; text-transform: none; letter-spacing: -.01em;
+    margin: 44px 0 6px; padding-top: 12px; border-top: 0.5px solid var(--bord); }
+  h2 small { display: block; font-size: 15px; font-weight: 400; color: var(--texte2); margin-top: 2px; }
+  h3 { font-size: 18px; margin: 26px 0 8px; }
+  .sommaire { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 18px 0; }
+  .sommaire a { display: block; padding: 14px 16px; border-radius: 12px; background: var(--carte);
+    border: 0.5px solid var(--bord); text-decoration: none; color: var(--texte); font-weight: 600; }
+  .sommaire a small { display: block; font-weight: 400; color: var(--texte2); font-size: 14px; margin-top: 2px; }
+  .etape { display: grid; grid-template-columns: 40px 1fr; gap: 4px 14px; margin: 22px 0; }
+  .etape > b { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-size: 17px; }
+  .etape .geste { font-size: 20px; font-weight: 700; line-height: 1.3; padding-top: 5px; }
+  .etape p { margin: 4px 0 0; font-size: 16px; color: var(--texte2); }
+  .etape > :not(b) { grid-column: 2; }
+  .etape figure { margin: 10px 0 0; }
+  figure { margin: 10px 0; }
+  figure img { display: block; max-width: 100%; height: auto; border-radius: 12px; border: 0.5px solid var(--bordf);
+    box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+  figure.tel img { max-width: 300px; }
+  figcaption { font-size: 13px; color: var(--texte3); margin-top: 6px; }
+  .astuce { background: var(--accent-bg); border-radius: 12px; padding: 12px 16px; margin: 16px 0; font-size: 16px; }
+  .attention { background: var(--ambre-bg); color: var(--ambre-f); border-radius: 12px; padding: 12px 16px;
+    margin: 16px 0; font-size: 16px; }
+  .faq dt { font-weight: 700; margin-top: 16px; }
+  .faq dd { margin: 4px 0 0; color: var(--texte2); font-size: 16px; }
+  @media (max-width: 560px) { .etape { grid-template-columns: 32px 1fr; } .etape > b { width: 30px; height: 30px; font-size: 15px; }
+    .etape figure { grid-column: 1 / -1; } }
+  @media print { header { background: none; color: #000; } a { color: #000; } figure img { box-shadow: none; }
+    h2 { page-break-before: always; } }
 </style>
 </head>
 <body>
 <header><h1>RHI · Mode d'emploi</h1></header>
 <main>
 
-<p><strong>RHI, c'est le Relevé Hebdomadaire Individuel.</strong> Chaque heure passée sur un
-chantier tombe sur son numéro d'affaire (le CH). C'est ce qui permet enfin de savoir ce qu'une
-affaire a coûté en main-d'œuvre — sans feuille d'heures à remplir le lundi.</p>
+<p style="font-size:19px"><strong>RHI, c'est le Relevé Hebdomadaire Individuel.</strong> Chacun touche
+son nom, puis son chantier : le temps compte tout seul, sur le bon numéro d'affaire (le CH). Plus de
+feuille d'heures à remplir le lundi — et chaque affaire sait enfin ce qu'elle a coûté en main-d'œuvre.</p>
 
-<h2>À l'atelier (la tablette sur pied)</h2>
-<ol>
-  <li class="geste">Je touche mon nom.</li>
-  <li class="geste">Je touche le chantier sur lequel je démarre.</li>
-  <li>Mes chantiers du jour, pris dans le planning, sont en haut. Si le mien n'y est pas, je le
-    cherche juste en dessous (nom du chantier ou CH). Une intervention sans numéro d'affaire va sur
-    <strong>CH DIVERS</strong> : le bureau transférera les heures sur le bon CH. Un CH qui n'existe nulle part est accepté :
-    le bureau vérifiera.</li>
-  <li>Je passe à un autre chantier ? <strong>Je touche l'autre chantier</strong> : le premier
-    s'arrête tout seul.</li>
-  <li>Pas sur un chantier (rangement, entretien machine, formation) ? Je touche le motif dans
-    « Hors affaire » : ce temps-là compte aussi, sur le CH des frais généraux. « Autre » sera
-    validé au bureau.</li>
-  <li class="geste">À la pause ou le soir : « J'arrête ».</li>
-</ol>
-<p>Sous mon nom, je vois ce que j'ai pointé aujourd'hui et cette semaine. S'il manque une
-journée, je le dis au bureau.</p>
-<p>La tablette revient toute seule à la liste des noms au bout d'une minute : le suivant ne pointe
-pas sous mon nom.</p>
+<div class="sommaire">
+  <a href="#atelier">🏭 Je suis à l'atelier<small>la tablette sur pied</small></a>
+  <a href="#pose">🚚 Je suis en pose<small>le téléphone du chef d'équipe</small></a>
+  <a href="#bureau">🖥 Je suis au bureau<small>contrôler, valider, suivre</small></a>
+  <a href="#soucis">🛟 Un souci ?<small>oubli, erreur, pas de réseau</small></a>
+</div>
+<p class="doux">Touchez une capture pour la voir en grand.</p>
 
-<h2>En pose (le téléphone du chef d'équipe)</h2>
-<ol>
-  <li>Le chef touche <strong>son nom et celui de son binôme</strong>, puis « C'est nous ».
-    Le téléphone s'en souvient pour les jours suivants.</li>
-  <li><strong>Le trajet compte dans le chantier</strong> : je pointe le chantier au départ, et le
-    retour du soir compte sur le dernier chantier de la journée.</li>
-  <li>Il touche le chantier : le pointage démarre <strong>pour les deux</strong>.</li>
-  <li>« J'arrête » arrête pour les deux.</li>
-</ol>
+<!-- ═══════════════════════════ ATELIER ═══════════════════════════ -->
+<h2 id="atelier">🏭 À l'atelier<small>La tablette sur pied. Trois gestes par jour, pas plus.</small></h2>
 
-<h2>Sans réseau</h2>
-<p>On pointe quand même. Un bandeau orange dit « Hors ligne · N gestes en attente » : ils partent
-tout seuls au retour du réseau, <strong>à l'heure où ils ont été faits</strong>. Au-delà de trois
-jours sans réseau, le bureau saisit à la main.</p>
+<div class="etape"><b>1</b><div class="geste">Je touche mon nom.</div>
+  <p>Sous chaque nom, on voit qui pointe déjà et sur quel chantier.</p>
+  <figure><a href="aide/atelier-1-noms.jpg" title="Voir en grand"><img src="aide/atelier-1-noms.jpg" alt="La tablette : la liste des noms de l'atelier" width="1024" height="700" loading="lazy"></a></figure>
+</div>
 
-<h2>Oublié d'arrêter ? Pointé sur le mauvais chantier ?</h2>
-<p>Pas de panique, rien n'est bloqué : on le dit au bureau, qui corrige. Un pointage resté ouvert
-plus de 10 heures est repéré tout seul.</p>
+<div class="etape"><b>2</b><div class="geste">Je touche le chantier sur lequel je démarre.</div>
+  <p>En haut, <strong>mon planning du jour</strong> : mes chantiers, déjà prêts. Un seul toucher suffit.</p>
+  <figure><a href="aide/atelier-2-chantiers.jpg" title="Voir en grand"><img src="aide/atelier-2-chantiers.jpg" alt="Mon écran : le planning du jour, la recherche d'un autre chantier, les motifs hors affaire" width="1024" height="700" loading="lazy"></a></figure>
+</div>
 
-<h2>Au bureau, le lundi matin</h2>
-<ol>
-  <li><strong>Plannings</strong> : déposer le planning ATE, le planning POSE et, pour la marche en
-    avant, le planning BET.</li>
-  <li><strong>Mes chantiers</strong> (chaque chargé d'affaires) : choisir son nom en haut ; chaque
-    CH de la semaine montre qui y a pointé, jour par jour, avec les écarts au planning (pointé hors
-    planning, prévu mais rien pointé). Quand c'est juste, <strong>Contrôlé</strong>. Un pointage
-    corrigé ou ajouté ensuite sur ce CH rouvre le contrôle, et le bouton reste bloqué tant qu'un
-    pointage est ouvert.</li>
-  <li><strong>À vérifier</strong> : corriger les arrêts oubliés, les CH tapés à la main, les motifs
-    « autre ». En haut, <strong>Ajouter un pointage oublié</strong> : une journée pas pointée, un
-    chantier oublié sur la tablette. Juste dessous, <strong>Au planning, rien pointé</strong> : les
-    journées où quelqu'un était prévu mais n'a rien pointé ; « Saisir » remplit le formulaire avec
-    le chantier prévu, il reste à mettre les heures.</li>
-  <li><strong>RHI de la semaine</strong> : relire chaque relevé, puis « Valider la semaine ». Une
-    semaine validée ne se corrige plus sans être dévalidée. L'export Excel reprend toute l'équipe.
-    <strong>Valider tous les relevés sans alerte</strong> valide d'un geste ceux qui n'ont rien à
-    regarder ; les autres sont listés avec la raison (alerte, journée oubliée, CH pas encore contrôlé par son
-    chargé d'affaires), à voir un par un. C'est le contrôle final du responsable de BU : sur chaque
-    ligne, « ✓ » et le nom de qui a contrôlé le CH, ou « à contrôler ».
-    En tête : le temps <strong>hors affaire</strong> de la semaine par motif (rangement,
-    entretien…), et <strong>Imprimer les RHI à signer</strong> — une feuille par personne, avec le
-    détail des pointages et deux cases de signature.</li>
-  <li><strong>Marche en avant</strong> : les poses des quatre semaines face à leurs études, leur fab
-    et leur traitement. Une fab n'est comptée faite que si elle est datée d'avant aujourd'hui.
-    La synthèse part toute seule par courrier le lundi à 7 h (si le courrier est réglé) ;
-    « Envoyer maintenant » la renvoie à la demande.</li>
-  <li><strong>Point d'affaire</strong> : heures réelles, prévu fab, coût de main-d'œuvre, vendu HT
-    (devis signés dont le titre porte le CH). Chaque chargé d'affaires y tient le <strong>reste à
-    faire</strong> de ses chantiers : cliquer le CH, saisir le reste en heures (et, une fois, les heures
-    chiffrées au devis, pose comprise), « Enregistrer l'estimation ». La colonne <strong>Projeté</strong>
-    additionne l'engagé et le reste, face au chiffrage : vert dans les clous, ambre au-dessus, rouge
-    au-delà de 110 %. Le reste fond tout seul à mesure qu'on pointe ; quand il est tout consommé,
-    l'estimation est dite « dépassée » : il faut la refaire.</li>
-  <li><strong>Vers InterFast</strong> : les cases que RHI posera dans le planning InterFast, une par
-    CH et par jour avec toute l'équipe, pour les RHI validés. Sous chaque case, les heures de chacun
-    (début, fin, pause) à recopier en <em>terminant</em> la case dans InterFast ; puis valider la
-    feuille de temps dans InterFast. <em>Rien n'y est envoyé pour l'instant</em>, sauf pour l'essai :
-    seule l'affaire de test <strong>CH00066</strong> porte le bouton « Essai : poser cette case dans
-    InterFast ». Les autres cases montrent ce qui partirait, sans rien envoyer.</li>
-  <li><strong>Personnes</strong> : <strong>Ajouter une personne</strong> pour un intérimaire (nom et
-    équipe) ; il apparaît aussitôt sur les tablettes. En fin de mission, décocher « Actif ».</li>
-  <li>Une fois par semaine : <strong>Plannings → Télécharger toute la base</strong>, à garder
-    ailleurs.</li>
-</ol>
+<div class="etape"><b>3</b><div class="geste">C'est parti : le chrono tourne.</div>
+  <p>Le cadre vert dit sur quoi je pointe. Je peux poser la tablette et aller travailler :
+    elle revient toute seule à la liste des noms au bout d'une minute, le suivant ne pointe pas sous mon nom.</p>
+  <figure><a href="aide/atelier-3-encours.jpg" title="Voir en grand"><img src="aide/atelier-3-encours.jpg" alt="Le pointage en cours : le chantier, le chrono, le bouton rouge J'arrête" width="1024" height="700" loading="lazy"></a></figure>
+</div>
 
-<h2>L'écran du mur</h2>
-<p>Ouvrir <strong>/ecran</strong> en plein écran. Il alterne toutes les 15 secondes l'atelier du
-jour (qui pointe quoi), la pose de la semaine et les envois en traitement, et se met à jour tout
-seul.</p>
+<div class="etape"><b>4</b><div class="geste">À la pause ou le soir : « J'arrête ».</div>
+  <p>Le gros bouton rouge. C'est tout.</p>
+</div>
 
+<h3>Je change de chantier dans la journée</h3>
+<p><strong>Je touche simplement l'autre chantier</strong> : le premier s'arrête tout seul, pas besoin
+d'appuyer sur « J'arrête » entre les deux.</p>
+
+<h3>Mon chantier n'est pas dans mon planning</h3>
+<div class="etape"><b>→</b><div class="geste">Je tape son nom ou son CH dans « Un autre chantier ».</div>
+  <p>Trois lettres suffisent (« clin » trouve la Clinique du Parc). Je touche le bon.
+    Une intervention sans numéro d'affaire va sur <strong>CH DIVERS</strong> : le bureau transférera les heures.
+    Un CH qui n'existe nulle part est accepté quand même : le bureau vérifiera.</p>
+  <figure><a href="aide/atelier-4-chercher.jpg" title="Voir en grand"><img src="aide/atelier-4-chercher.jpg" alt="La recherche d'un chantier : on tape quelques lettres, le chantier apparaît" width="1024" height="700" loading="lazy"></a></figure>
+</div>
+
+<h3>Je ne suis pas sur un chantier</h3>
+<div class="etape"><b>→</b><div class="geste">Je touche le motif dans « Hors affaire ».</div>
+  <p>Rangement, entretien machine, formation : ce temps-là compte aussi (sur le CH des frais généraux).
+    « Autre » sera validé par le bureau. Le pliage, le débit, le plasma se pointent toujours sur un CH.</p>
+  <figure><a href="aide/atelier-5-hors-affaire.jpg" title="Voir en grand"><img src="aide/atelier-5-hors-affaire.jpg" alt="Les quatre motifs hors affaire en bas de l'écran" width="1024" height="700" loading="lazy"></a></figure>
+</div>
+
+<div class="astuce">👀 Sous mon nom, je vois ce que j'ai pointé <strong>aujourd'hui</strong> et
+<strong>cette semaine</strong>. S'il manque une journée, je le dis au bureau.</div>
+
+<!-- ═══════════════════════════ POSE ═══════════════════════════ -->
+<h2 id="pose">🚚 En pose<small>Le téléphone du chef d'équipe pointe pour lui et son binôme.</small></h2>
+
+<div class="etape"><b>1</b><div class="geste">Le chef touche son nom et celui de son binôme, puis « C'est nous ».</div>
+  <p>Les noms choisis sont encadrés. Le téléphone s'en souvient pour les jours suivants.</p>
+  <figure class="tel"><a href="aide/pose-1-equipe.jpg" title="Voir en grand"><img src="aide/pose-1-equipe.jpg" alt="Le téléphone : deux noms choisis et le bouton vert C'est nous" width="390" height="780" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>2</b><div class="geste">Au départ, il touche le chantier : le pointage démarre pour les deux.</div>
+  <p><strong>Le trajet compte dans le chantier</strong> : on pointe en partant, et le retour du soir
+    compte sur le dernier chantier de la journée.</p>
+  <figure class="tel"><a href="aide/pose-3-encours.jpg" title="Voir en grand"><img src="aide/pose-3-encours.jpg" alt="Le pointage en cours pour deux personnes sur le téléphone" width="390" height="780" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>3</b><div class="geste">« J'arrête » arrête pour les deux.</div></div>
+
+<!-- ═══════════════════════════ SOUCIS ═══════════════════════════ -->
+<h2 id="soucis">🛟 Un souci ?</h2>
+
+<h3>Pas de réseau</h3>
+<div class="etape"><b>→</b><div class="geste">On pointe quand même, normalement.</div>
+  <p>Un bandeau orange dit « Hors ligne · N gestes en attente » : ils partent tout seuls au retour du
+    réseau, <strong>à l'heure où ils ont été faits</strong>. Au-delà de trois jours sans réseau, le bureau
+    saisit à la main.</p>
+  <figure class="tel"><a href="aide/hors-ligne.jpg" title="Voir en grand"><img src="aide/hors-ligne.jpg" alt="Le bandeau orange Hors ligne avec un geste en attente" width="390" height="780" loading="lazy"></a></figure>
+</div>
+
+<dl class="faq">
+  <dt>J'ai oublié d'arrêter hier soir.</dt>
+  <dd>Pas de panique, rien n'est bloqué : on le dit au bureau, qui corrige. Un pointage resté ouvert plus
+    de 10 heures est repéré tout seul.</dd>
+  <dt>J'ai pointé sur le mauvais chantier.</dt>
+  <dd>Je touche le bon chantier tout de suite, et je préviens le bureau pour le début de la journée.</dd>
+  <dt>Mon nom n'est pas dans la liste.</dt>
+  <dd>Le bureau l'ajoute (onglet Personnes) : il apparaît aussitôt sur les tablettes.</dd>
+  <dt>La tablette demande un « code d'accès ».</dt>
+  <dd>C'est la première fois qu'elle sert : le bureau tape le code terrain, une seule fois. Si elle demande
+    « Cet appareil sert à… », toucher 🏭 L'atelier (tablette sur pied) ou 🚚 La pose (téléphone du chef).</dd>
+</dl>
+<figure><a href="aide/installer.jpg" title="Voir en grand"><img src="aide/installer.jpg" alt="Premier démarrage : choisir L'atelier ou La pose" width="1024" height="700" loading="lazy"></a>
+  <figcaption>Premier démarrage d'un appareil : on choisit une fois pour toutes.</figcaption></figure>
+
+<!-- ═══════════════════════════ BUREAU ═══════════════════════════ -->
+<h2 id="bureau">🖥 Au bureau<small>Sur PC : les onglets sont à gauche. Sur téléphone : en haut, on les fait défiler du doigt.
+  Le code bureau est demandé une fois par appareil.</small></h2>
+
+<div class="attention">L'ordre du lundi matin : <strong>1.</strong> Plannings → <strong>2.</strong> chaque
+chargé d'affaires contrôle ses chantiers → <strong>3.</strong> À vérifier → <strong>4.</strong> le
+responsable de BU valide le RHI de la semaine.</div>
+
+<div class="etape"><b>1</b><div class="geste">Déposer les plannings</div>
+  <p>Déposer le planning ATE (atelier), le planning POSE et, pour la marche en avant, le planning BET.
+    RHI en tire les noms et « mon planning du jour » de chacun. Les heures déjà pointées ne sont jamais touchées.
+    Une fois par semaine : <strong>Télécharger toute la base</strong>, à garder ailleurs.</p>
+  <figure><a href="aide/bureau-1-plannings.jpg" title="Voir en grand"><img src="aide/bureau-1-plannings.jpg" alt="L'onglet Déposer les plannings" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>2</b><div class="geste">Mes chantiers — chaque chargé d'affaires</div>
+  <p>Choisir son nom en haut. Chaque CH de la semaine montre qui y a pointé, jour par jour, avec les
+    écarts au planning (pointé hors planning, prévu mais rien pointé). Quand c'est juste :
+    <strong>✓ Heures contrôlées</strong>. Un pointage corrigé ensuite sur ce CH rouvre le contrôle ;
+    le bouton reste bloqué tant qu'un pointage est ouvert.</p>
+  <figure><a href="aide/bureau-2-chantiers.jpg" title="Voir en grand"><img src="aide/bureau-2-chantiers.jpg" alt="L'onglet Mes chantiers avec le bouton Heures contrôlées" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>3</b><div class="geste">À vérifier — corriger ce qui cloche</div>
+  <p>Les arrêts oubliés, les CH tapés à la main, les motifs « autre » : corriger la fin ou le CH sur la
+    ligne. En haut, <strong>Ajouter un pointage oublié</strong> (une journée pas pointée). Dessous,
+    <strong>Au planning, rien pointé</strong> : « Saisir » remplit le formulaire avec le chantier prévu,
+    il reste à mettre les heures. Congé ou maladie : rien à faire.</p>
+  <figure><a href="aide/bureau-3-verifier.jpg" title="Voir en grand"><img src="aide/bureau-3-verifier.jpg" alt="L'onglet À vérifier : ajout d'un pointage oublié et pointages restés ouverts" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>4</b><div class="geste">RHI de la semaine — le responsable de BU valide</div>
+  <p>Relire chaque relevé, puis <strong>Valider la semaine</strong>. Sur chaque ligne, « ✓ » et qui a
+    contrôlé le CH, ou « à contrôler ». <strong>Valider tous les relevés sans alerte</strong> valide
+    d'un geste ceux qui n'ont rien à regarder ; les autres sont listés avec la raison.
+    <strong>Imprimer les RHI à signer</strong> : une feuille par personne, deux cases de signature.
+    Une semaine validée ne se corrige plus sans être dévalidée. En tête, le temps hors affaire de la semaine.</p>
+  <figure><a href="aide/bureau-4-rhi.jpg" title="Voir en grand"><img src="aide/bureau-4-rhi.jpg" alt="L'onglet RHI de la semaine avec les boutons Valider" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>5</b><div class="geste">Point d'affaire — où en est chaque chantier</div>
+  <p>Heures réelles face au prévu fab, coût de main-d'œuvre, vendu HT. Cliquer un CH pour le détail.
+    Le chargé d'affaires y tient le <strong>reste à faire</strong> : saisir le reste en heures (et, une
+    fois, les heures chiffrées au devis, pose comprise), puis « Enregistrer l'estimation ».
+    <strong>Projeté</strong> = engagé + reste, face au chiffrage : vert dans les clous, ambre au-dessus,
+    rouge au-delà de 110 %. Le reste fond tout seul à mesure qu'on pointe ; tout consommé, l'estimation
+    est « dépassée » : il faut la refaire.</p>
+  <figure><a href="aide/bureau-5-affaire.jpg" title="Voir en grand"><img src="aide/bureau-5-affaire.jpg" alt="Le détail d'une affaire avec le bloc Reste à faire" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>6</b><div class="geste">Vers InterFast — ce qui partira dans le planning InterFast</div>
+  <p>Une case par CH et par jour, avec toute l'équipe, pour les RHI validés. Sous chaque case, les heures
+    de chacun (début, fin, pause) à recopier en <em>terminant</em> la case dans InterFast, puis valider la
+    feuille de temps là-bas. <em>Rien n'y est envoyé pour l'instant</em>, sauf pour l'essai : seule
+    l'affaire de test <strong>CH00066</strong> porte le bouton « Essai : poser cette case dans InterFast ».
+    Les autres cases montrent ce qui partirait, sans rien envoyer.</p>
+  <figure><a href="aide/bureau-6-envois.jpg" title="Voir en grand"><img src="aide/bureau-6-envois.jpg" alt="L'onglet Vers InterFast en mode essai" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>7</b><div class="geste">Marche en avant — les poses à risque</div>
+  <p>Les poses des quatre semaines face à leurs études, leur fab et leur traitement. Une fab n'est comptée
+    faite que si elle est datée d'avant aujourd'hui. La synthèse se télécharge (« ⬇ La synthèse »), à
+    transférer par mail : l'envoi automatique du lundi n'est pas branché.</p>
+  <figure><a href="aide/bureau-7-marche.jpg" title="Voir en grand"><img src="aide/bureau-7-marche.jpg" alt="L'onglet Marche en avant avec les risques prioritaires" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>8</b><div class="geste">Personnes — un intérimaire arrive</div>
+  <p><strong>Ajouter une personne</strong> : nom et équipe ; elle apparaît aussitôt sur les tablettes.
+    En fin de mission, décocher « Actif ». On y règle aussi le coût horaire et le compte InterFast de chacun.</p>
+  <figure><a href="aide/bureau-8-personnes.jpg" title="Voir en grand"><img src="aide/bureau-8-personnes.jpg" alt="L'onglet Personnes" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<div class="etape"><b>9</b><div class="geste">En ce moment — qui pointe quoi, maintenant</div>
+  <figure><a href="aide/bureau-9-direct.jpg" title="Voir en grand"><img src="aide/bureau-9-direct.jpg" alt="L'onglet En ce moment" width="1280" height="760" loading="lazy"></a></figure>
+</div>
+
+<h3>L'écran du mur</h3>
+<p>Ouvrir <strong>/ecran</strong> en plein écran sur la télé de l'atelier. Il alterne toutes les
+15 secondes l'atelier du jour (qui pointe quoi), la pose de la semaine et les envois en traitement,
+et se met à jour tout seul.</p>
+<figure><a href="aide/ecran-mur.jpg" title="Voir en grand"><img src="aide/ecran-mur.jpg" alt="L'écran du mur : qui pointe quoi à l'atelier" width="1280" height="720" loading="lazy"></a></figure>
+
+<p class="doux" style="margin-top:40px">Les captures de ce guide sont faites sur des noms et des chantiers inventés.</p>
 </main>
 </body>
 </html>

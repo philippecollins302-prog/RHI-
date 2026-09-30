@@ -61,6 +61,18 @@ for geste in ("J'arrête", "Valider la semaine", "Télécharger toute la base", 
     verif(geste in guide and any(geste in (PUB / f).read_text() for f in ("terrain.js", "bureau.js")),
           f"mode d'emploi : « {geste} » existe à l'écran")
 verif("Rien n'y est envoyé" in guide, "le guide dit que l'envoi vers InterFast n'est pas branché")
+for src in re.findall(r'src="([^"#:]+)"', guide):
+    verif((PUB / src).exists(), f"mode d'emploi : la capture {src} est absente du disque")
+    verif(src.startswith("aide/"), f"mode d'emploi : {src} hors du dossier des captures")
+verif(all(re.search(r'<img [^>]*alt="[^"]+"', i) for i in re.findall(r"<img [^>]*>", guide)),
+      "mode d'emploi : chaque capture dit ce qu'elle montre (alt)")
+
+# L'attribut hidden ne cache rien si la feuille donne un display au même
+# élément : le 30/09/2026, « button { display: inline-block } » (dessin Boost
+# AO) a fait réapparaître « Changer de personne » sur l'écran des noms.
+css = (PUB / "app.css").read_text()
+verif(re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important", css),
+      "app.css : [hidden] l'emporte sur tout display (sinon un bouton caché s'affiche)")
 
 # Les motifs de secours de la tablette (appareil qui n'a jamais reçu de menu)
 # sont une COPIE de base.MOTIFS : une copie dérive sans bruit. Le 30/09/2026,

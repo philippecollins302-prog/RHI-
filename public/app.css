@@ -30,6 +30,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* hidden doit gagner : sans quoi « button { display } » rallume un bouton caché. */
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--fond); color: var(--texte);
   font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Open Sans", sans-serif;
   -webkit-font-smoothing: antialiased; }
@@ -110,8 +112,8 @@ tr.total td { font-weight: 700; background: var(--carte2); }
 .defile table { background: transparent; }
 .defile tr:last-child td { border-bottom: 0; }
 .carte table { border: 0; }
-/* Un tableau dans une carte : un seul cadre, pas deux. */
-.carte .defile { border: 0; border-top: 0.5px solid var(--bord); border-radius: 0; margin: 12px -18px -16px;
+/* Un tableau dans une carte : un seul cadre, pas deux — et sous le bouton flottant, pas à côté. */
+.carte .defile { clear: both; border: 0; border-top: 0.5px solid var(--bord); border-radius: 0; margin: 12px -18px -16px;
   background: transparent; }
 .carte .defile th:first-child, .carte .defile td:first-child { padding-left: 18px; }
 .carte .defile th:last-child, .carte .defile td:last-child { padding-right: 18px; }
@@ -123,7 +125,10 @@ body.bureau button, body.bureau .btn { padding: 8px 14px; font-size: 14px; font-
 body.bureau .carte > [data-valider], body.bureau .carte > [data-devalider] { float: right; margin: 0 0 6px 8px; }
 body.bureau input, body.bureau select, body.bureau textarea { padding: 8px 10px; font-size: 14px; }
 body.bureau h2 { margin: 28px 0 10px; }
-body.bureau main { max-width: none; margin: 0; padding: 16px; }
+body.bureau main { max-width: none; margin: 0; padding: 16px; min-width: 0; }
+/* Un formulaire posé dans une carte (pointage oublié, nouvelle personne)
+   tient sur une ligne au PC, pas cinq champs empilés. */
+body.bureau .carte > select, body.bureau .carte > input { width: auto; max-width: 100%; margin: 4px 4px 4px 0; }
 /* Une seule barre : en haut sur téléphone (onglets en pastilles qui défilent),
    à gauche sur PC. Un seul jeu de boutons, donc un seul état « actif ». */
 .lateral { position: sticky; top: 0; z-index: 5; background: var(--carte); border-bottom: 0.5px solid var(--bord);
