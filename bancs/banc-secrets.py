@@ -52,6 +52,18 @@ r, vu = poser({"version": 1, "profiles": [{"token": "seul"}]})
 verif(r.returncode != 0 and vu == "" and "secret" in r.stderr,
       "un secret manquant : rien n'est posé, pas même le jeton (jamais un jeton neuf avec un vieux secret)")
 
+# Les empreintes : même calcul sur le poste et dans la chaîne, sans valeur affichée.
+conf.write_text(json.dumps({"version": 1, "profiles": [{"token": "jeton-v4", "secret": "secret-v4"}]}))
+recu.write_text("")
+r = subprocess.run(["sh", str(RACINE / "outils/secrets-github.sh"), "--empreintes"], capture_output=True, text=True,
+                   env=dict(os.environ, CLEVER_CONFIG=str(conf), GH="gh-absent-du-poste"))
+chaine = subprocess.run(["bash", "-c", 'printf %s "$1" | wc -c | tr -d " "; printf %s "$1" | sha256sum | cut -c1-8',
+                         "_", "secret-v4"], capture_output=True, text=True).stdout.split()
+verif(r.returncode == 0 and f"secret {chaine[0]} car. {chaine[1]}" in r.stdout,
+      f"l'empreinte du poste se calcule comme celle de la chaîne {r.stdout!r} {chaine}")
+verif(recu.read_text() == "" and "secret-v4" not in r.stdout + r.stderr,
+      "--empreintes ne pose rien, n'a pas besoin de gh, et n'affiche aucune valeur")
+
 conf.unlink()
 r = subprocess.run(["sh", str(RACINE / "outils/secrets-github.sh")], capture_output=True, text=True,
                    env=dict(os.environ, CLEVER_CONFIG=str(conf), GH=str(faux)))

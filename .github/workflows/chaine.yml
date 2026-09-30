@@ -82,10 +82,15 @@ jobs:
       - name: Connexion Clever
         # Un maillon à part : « identifiants refusés » et « déploiement raté »
         # ne se soignent pas pareil, le motif doit les distinguer.
+        # Refusé : l'empreinte de chaque secret (longueur + début du sha256) se
+        # compare à celle du poste (outils/secrets-github.sh --empreintes) pour
+        # savoir lequel des deux est faux, sans que la valeur apparaisse jamais.
         run: |
           if ! clever profile > profil.log 2>&1; then
             cat profil.log
-            echo "Clever refuse CLEVER_TOKEN / CLEVER_SECRET : $(grep -m1 -i 'error' profil.log || tail -n 1 profil.log)" > motif.txt
+            printf '%s' "Clever refuse CLEVER_TOKEN / CLEVER_SECRET : $(grep -m1 -i 'error' profil.log || tail -n 1 profil.log)" > motif.txt
+            e="token $(printf %s "$CLEVER_TOKEN" | wc -c | tr -d ' ') car. $(printf %s "$CLEVER_TOKEN" | sha256sum | cut -c1-8), secret $(printf %s "$CLEVER_SECRET" | wc -c | tr -d ' ') car. $(printf %s "$CLEVER_SECRET" | sha256sum | cut -c1-8)"
+            echo " — empreintes GitHub : $e" >> motif.txt
             exit 1
           fi
           head -n 1 profil.log

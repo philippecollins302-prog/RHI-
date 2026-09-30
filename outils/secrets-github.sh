@@ -2,6 +2,9 @@
 # ═══ POSER LES DEUX SECRETS DE LA CHAÎNE, SANS LES VOIR ═══
 #
 #   sh outils/secrets-github.sh
+#   sh outils/secrets-github.sh --empreintes   # ne pose rien : longueur et début
+#                                              # du sha256, à comparer au motif
+#                                              # d'un déploiement refusé
 #
 # Lit la session clever-tools du poste et la pose dans les secrets GitHub
 # CLEVER_TOKEN / CLEVER_SECRET, de programme à programme : rien ne s'affiche,
@@ -19,7 +22,9 @@ DEPOT=${DEPOT:-philippecollins302-prog/RHI-}
 GH=${GH:-gh}
 
 [ -f "$F" ] || { echo "pas de session clever-tools ($F) : lancer d'abord clever login" >&2; exit 1; }
-command -v "$GH" >/dev/null 2>&1 || { echo "gh absent : brew install gh, puis gh auth login" >&2; exit 1; }
+EMPREINTES=0
+[ "${1:-}" = --empreintes ] && EMPREINTES=1
+[ "$EMPREINTES" = 1 ] || command -v "$GH" >/dev/null 2>&1 || { echo "gh absent : brew install gh, puis gh auth login" >&2; exit 1; }
 
 lire() {  # $1 = token | secret ; imprime la valeur sans retour à la ligne
   python3 - "$F" "$1" <<'PY'
@@ -45,6 +50,13 @@ PY
 # Les deux d'abord, la pose ensuite : jamais un jeton neuf avec un vieux secret.
 T=$(lire token) || exit 1
 S=$(lire secret) || exit 1
+if [ "$EMPREINTES" = 1 ]; then
+  # Même calcul que l'étape « Connexion Clever » de la chaîne.
+  python3 -c 'import hashlib,sys
+e=lambda v: f"{len(v.encode())} car. {hashlib.sha256(v.encode()).hexdigest()[:8]}"
+print(f"empreintes du poste : token {e(sys.argv[1])}, secret {e(sys.argv[2])}")' "$T" "$S"
+  exit 0
+fi
 printf '%s' "$T" | "$GH" secret set CLEVER_TOKEN -R "$DEPOT"
 printf '%s' "$S" | "$GH" secret set CLEVER_SECRET -R "$DEPOT"
 echo "✅ CLEVER_TOKEN et CLEVER_SECRET posés sur $DEPOT (valeurs non affichées)"

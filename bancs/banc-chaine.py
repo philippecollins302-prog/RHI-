@@ -43,6 +43,9 @@ verif(noms.index("Connexion Clever") < noms.index("Déployer") and "clever profi
 for cmd in ("clever link", "clever deploy", "clever profile"):
     bloc = etapes[etapes.index(cmd) - 12: etapes.index(cmd) + 200]
     verif("if !" in bloc and "motif.txt" in bloc, f"« {cmd} » : un échec écrit son motif")
+connexion = next(e["run"] for e in d["steps"] if e.get("name") == "Connexion Clever")
+verif("sha256sum" in connexion and 'echo "$CLEVER_TOKEN' not in connexion and "cat profil.log" in connexion,
+      "un refus d'identifiants donne l'empreinte de chaque secret, jamais sa valeur (30/09 : lequel des deux ?)")
 verif(d.get("outputs", {}).get("motif") and jobs["bancs"].get("outputs", {}).get("motif"),
       "chaque maillon rend son motif")
 verif("GITHUB_STEP_SUMMARY" in str(jobs["bancs"]) and "GITHUB_STEP_SUMMARY" in etapes,
