@@ -41,6 +41,7 @@ FACULTATIVES = ("SMTP_PORT", "MAIL_FROM", "RHI_CH_DIVERS", "RHI_CH_FRAIS_GENERAU
 LANCEMENT = {"CC_RUN_COMMAND": "uvicorn app:app --host 0.0.0.0 --port 9000", "CC_PYTHON_VERSION": "3.12"}
 # Tout ce que RHI lit : le reste, sur RHI, ne sert à rien — et une clé qui ne
 # sert à rien est une clé qui fuit pour rien.
+LONGUEUR_BUREAU = 12   # app.LONGUEUR_BUREAU (tenu identique par banc-telecommande)
 UTILES = set(ATTENDUES) | set(FACULTATIVES) | set(LANCEMENT) | {"CC_FS_BUCKET"}
 
 
@@ -105,6 +106,18 @@ def diagnostic(rhi: str, v: dict) -> dict:
     return d
 
 
+def codes(v: dict) -> list:
+    """Les règles d'app.reglage_des_codes que la présence seule ne montre pas.
+    Le 30/09/2026, les deux codes étaient « réglés » et le site restait « à
+    régler » : il fallait deviner laquelle. On dit la règle, jamais la valeur."""
+    t, b = v.get("RHI_CODE_TERRAIN", ""), v.get("RHI_CODE_BUREAU", "")
+    if t and b and t == b:
+        return ["les codes terrain et bureau sont identiques"]
+    if b and len(b) < LONGUEUR_BUREAU:
+        return [f"le code bureau fait moins de {LONGUEUR_BUREAU} caractères"]
+    return []
+
+
 def etat(rhi: str) -> dict:
     v = variables(rhi)
     dire("### Réglages de RHI")
@@ -113,6 +126,8 @@ def etat(rhi: str) -> dict:
     for nom in FACULTATIVES:
         if nom in v:
             dire(f"- ✅ `{nom}` : {'réglé' if v[nom] else 'vide'}")
+    for probleme in codes(v):
+        dire(f"- ❌ codes d'accès : {probleme} — le site refuse de se dire prêt")
     d = diagnostic(rhi, v)
     dire("### Lancement")
     for n, attendu in LANCEMENT.items():
