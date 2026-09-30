@@ -15,6 +15,11 @@ sur son disque disparaît, **base comprise**. La base vit donc sur un
   un disque réseau. RHI est réglé ainsi ; `/api/sante` le montre.
 - **Une seule instance.** Deux instances, ce sont deux processus qui
   écrivent dans la même base par le réseau.
+- **Et donc `zero-downtime=false`** (30/09/2026) : le déploiement bleu/vert
+  ferait tourner l'ancienne et la nouvelle en même temps, ce qui est
+  exactement « deux instances » pendant le recouvrement. On paie 20 à 30
+  secondes de coupure pour n'avoir qu'un seul écrivain — voir plus bas, et ne
+  pas le remettre à `true`.
 
 ## L'application VIP Plus existe (29/09/2026)
 
@@ -64,24 +69,38 @@ session dans une liste `profiles`. Le premier déploiement a été refusé
 les deux secrets ensemble et n'affiche aucune valeur (`banc-secrets`).
 Ils expirent avec la session Clever : la reposer à ce moment-là.
 
-### Le déploiement coupe-t-il le service ?
+### Le déploiement coupe-t-il le service ? OUI, et c'est voulu
 
-**Normalement non, mais ce n'est pas encore mesuré** (pas d'accès Clever
-depuis le développement). D'après le fonctionnement de Clever — à confirmer —
-un déploiement démarre une nouvelle instance, attend qu'elle réponde, bascule
-le trafic, puis arrête l'ancienne. Donc :
+**OUI : 20 à 30 secondes de coupure à chaque déploiement.** Ce paragraphe
+disait le contraire — « pas de coupure attendue » — et il avait cessé d'être
+vrai le 30/09/2026, quand `zero-downtime` a été mis à **`false`** sur l'app de
+production. Vérifié, pas supposé :
 
-- **pas de coupure attendue**. Si la nouvelle ne démarre pas, l'ancienne
-  continue de servir, et la vérification voit l'ancien commit : rouge ;
-- **mais pendant la bascule, deux processus RHI tournent sur la même base
-  SQLite du bucket**, quelques dizaines de secondes. Les requêtes vont à l'un
-  ou à l'autre ; le risque est une écriture de chacun au même instant, par
-  exemple le veilleur horaire (sauvegarde, courrier du lundi). Faible, pas nul ;
-- s'il y a une coupure, les tablettes gardent leurs gestes : un 503 les
-  laisse dans la file (`banc-file`), ils repartent au retour.
+    clever config get zero-downtime --app <APP_VIP de outils/clever.conf>
+    → false
 
-**Au premier déploiement :** regarder `clever activity`, chronométrer le 503
-éventuel, puis écrire ici la durée constatée à la place de ce paragraphe.
+**Pourquoi on a choisi la coupure.** Le bleu/vert (`zero-downtime=true`, le
+réglage par défaut) fait tourner l'ancienne et la nouvelle instance en même
+temps pendant le recouvrement : **deux processus qui écrivent le même fichier
+SQLite posé sur un disque réseau**, ce que SQLite ne peut pas tenir — le
+verrouillage ne traverse pas le réseau. Ce n'est pas une inquiétude théorique :
+c'est exactement la configuration qui, sur Ali Baba, a fait passer la base de
+1 anomalie à 24 en une matinée de cinq déploiements, puis mis toute l'équipe
+dehors le lendemain matin. RHI avait le même réglage, avec la même base sur le
+même genre de bucket.
+
+Donc **20 à 30 secondes de coupure contre un seul écrivain** : sur une base
+posée sur un disque réseau, ce n'est pas un arbitrage, c'est la seule option
+tenable. **NE PAS remettre `zero-downtime` à `true`.**
+
+- La coupure ne fait rien perdre au terrain : un 503 laisse le geste dans la
+  file de la tablette (`banc-file`), il repart au retour. C'est précisément ce
+  pour quoi la file a été écrite.
+- Si la nouvelle instance ne démarre pas, `outils/verifier-deploiement.sh` voit
+  que le site ne sert pas CE commit et sort rouge.
+- Ce qu'il reste à mesurer, et qui n'est qu'un chiffre : la durée réelle du 503
+  au prochain déploiement. L'écrire ici à la place de « 20 à 30 secondes », qui
+  est la valeur constatée sur Ali Baba, pas sur RHI.
 
 ### À la main, en secours
 
