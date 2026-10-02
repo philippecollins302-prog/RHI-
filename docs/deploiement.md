@@ -157,7 +157,7 @@ relié à l'application `rhi`. Noter son hôte
 | `CC_PYTHON_VERSION` | `3.12` |
 | `CC_FS_BUCKET` | `/donnees:bucket-…-fsbucket.services.clever-cloud.com` |
 | `RHI_CODE_TERRAIN` | le code des tablettes et téléphones (à choisir) |
-| `RHI_CODE_BUREAU` | le code du bureau : différent, **12 caractères au moins** |
+| `RHI_CODE_BUREAU` | le code du bureau : différent du code terrain |
 | `RHI_COUT_HORAIRE` | le taux horaire moyen chargé, en €/h (en attendant les coûts par personne) |
 | `RHI_MARCHE_A` | destinataires de la synthèse marche en avant (adresses séparées par des virgules) — l'envoi du lundi est éteint depuis la revue du 01/10 : la marche en avant part chez un agent à part |
 | `RHI_PLANNINGS_URL` | liens de **téléchargement direct** des plannings ATE et POSE (séparés par des virgules ou des retours à la ligne) : RHI les relit tout seul ; vide = dépôt à la main |
@@ -194,9 +194,8 @@ Le détail, avec le code bureau :
 - `dans_donnees: false` → la base est sur le disque éphémère : **arrêter
   tout**, corriger le bucket, redéployer. Rien de saisi avant n'est gardé.
 - `codes: "à régler"` → l'application est **fermée** (503 « Accès fermé,
-  réglage incomplet : … ») : les codes échouent fermés. Il manque un code, les
-  deux sont identiques, ou le code bureau fait moins de 12 caractères. Le
-  message dit lequel.
+  réglage incomplet : … ») : les codes échouent fermés. Il manque un code, ou les
+  deux sont identiques. Le message dit lequel.
 
 Dix codes faux en une minute depuis la même adresse bloquent cette adresse
 une minute (429) : une tablette qui insiste avec un vieux code, après un
