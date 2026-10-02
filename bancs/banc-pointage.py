@@ -101,6 +101,23 @@ verif(len(lundi_pose) == 1 and lundi_pose[0]["personnes"] == ["LUC", "MARC"] and
 verif(e["pose"][2]["equipes"] == [], "mercredi : CP, personne en pose")
 verif(any(p["en_cours"] for p in e["atelier"]) is False, "")
 
+# ── Le planning de la semaine sur le mur (revue du 01/10/2026) ──
+sem = e["semaine"]
+verif(sem["jours"] == ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"],
+      "la semaine entière, jours passés compris")
+paul = next(b for b in sem["atelier"] if b["nom"] == "PAUL")
+verif([x["ch"] for x in paul["cases"][0]] == ["CH00901"] and [x["ch"] for x in paul["cases"][2]] == ["CH00901"],
+      f"PAUL : les pins du lundi au mercredi (case fusionnée) : {paul['cases']}")
+verif(paul["cases"][0][0]["couleur"] == "#FFC000", f"la couleur d'Alexis suit la case : {paul['cases'][0]}")
+verif(paul["cases"][3][0]["couleur"] == "#E6B9B8", f"couleur de thème + nuance, rendue comme Excel : {paul['cases'][3]}")
+verif(paul["cases"][0][0]["conduc"] == "AA", "le conducteur de l'affaire est sur la case")
+verif([b["nom"] for b in sem["atelier"]] == ["PAUL", "JEAN"], "l'atelier dans l'ordre de l'Excel")
+equipe = sem["pose"][0]
+verif(equipe["nom"] == "LUC & MARC" and equipe["personnes"] == ["LUC", "MARC"], f"une ligne par équipe de pose : {equipe}")
+verif(equipe["cases"][0][0]["couleur"] == "#92D050" and equipe["cases"][1][0]["ch"] == "CH00901",
+      "la pose garde sa couleur, sur les deux jours de la case")
+verif(equipe["cases"][2] == [], "le CP ne fait pas une case")
+
 # ── Mardi soir, le bureau lit le RHI ──
 a(18, 0, jour=29)
 rhi = c.get("/api/rhi?personne=PAUL&semaine=2026-09-30").json()

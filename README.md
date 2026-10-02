@@ -48,7 +48,10 @@ planning ATE et le planning POSE SER. La tablette est sur
 | `RHI_CH_FRAIS_GENERAUX` | CH InterFast du hors affaire (défaut VIP : `CH00081`) |
 | `RHI_CH_DIVERS` | CH InterFast des interventions sans numéro d'affaire ; vide = pas proposé sur la tablette |
 | `RHI_COUT_HORAIRE` | taux horaire moyen (€/h) quand une personne n'a pas le sien |
-| `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
+| `RHI_MARCHE_A` | destinataires de la synthèse marche en avant (adresses séparées par des virgules) — l'envoi du lundi est éteint depuis la revue du 01/10 : la marche en avant part chez un agent à part |
+| `RHI_PLANNINGS_URL` | liens de **téléchargement direct** des plannings ATE et POSE (séparés par des virgules ou des retours à la ligne) : RHI les relit tout seul ; vide = dépôt à la main |
+| `RHI_PLANNINGS_MINUTES` | tous les combien RHI relit ces liens (5 par défaut) |
+| `RHI_HEURES_JOUR` | la journée normale, du lundi au vendredi (`8,8,8,8,7` par défaut) : base des écarts du RHI |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
 | `INTERFAST_VIP` / `INTERFAST_ALFA` | clé InterFast de l'entreprise de l'instance — jamais dans le dépôt |
 

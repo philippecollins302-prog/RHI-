@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from rhi import base, courrier, interfast, lecture
+from rhi import base, courrier, depot_auto, interfast, lecture
 
 PUBLIC = Path(__file__).parent / "public"
 
@@ -67,18 +67,30 @@ def marche_du_lundi(c, a: dt.datetime, force: bool = False):
     return statut
 
 
-def lundi_matin():
+def plannings_relus():
     c = base.connexion(getattr(app.state, "chemin_base", None))
     try:
-        return marche_du_lundi(c, maintenant())
+        return depot_auto.relever(c, interfast.entreprise())
     finally:
         c.close()
 
 
-async def veilleur():
-    """Toutes les heures : la sauvegarde du jour, et le lundi la marche en avant."""
+async def releveur():
+    """Toutes les cinq minutes : les plannings du dossier partagé, s'ils ont changé."""
     while True:
-        for tache in (sauvegarde_du_jour, lundi_matin):
+        if depot_auto.sources():
+            try:
+                await asyncio.to_thread(plannings_relus)
+            except Exception as e:  # un passage raté ne doit pas tuer l'appli
+                print("plannings_relus ratée :", type(e).__name__)
+        await asyncio.sleep(depot_auto.minutes() * 60)
+
+
+async def veilleur():
+    """Toutes les heures : la sauvegarde du jour. (La marche en avant du lundi
+    est sortie de RHI à la revue du 01/10/2026 : elle n'est plus lancée.)"""
+    while True:
+        for tache in (sauvegarde_du_jour,):
             try:
                 await asyncio.to_thread(tache)
             except Exception as e:  # une tâche ratée ne doit pas tuer l'appli
@@ -88,9 +100,10 @@ async def veilleur():
 
 @contextlib.asynccontextmanager
 async def vie(_app):
-    tache = asyncio.create_task(veilleur())
+    taches = [asyncio.create_task(veilleur()), asyncio.create_task(releveur())]
     yield
-    tache.cancel()
+    for t in taches:
+        t.cancel()
 
 
 app = FastAPI(title="RHI", lifespan=vie)
@@ -348,6 +361,18 @@ def api_ecran(jour: str | None = None, c=Depends(db)):
 TAILLE_MAX = 20_000_000   # les vrais plannings font moins de 2 Mo
 
 
+@app.get("/api/plannings/auto", dependencies=[Depends(acces_bureau)])
+def api_plannings_auto(c=Depends(db)):
+    return depot_auto.etat(c)
+
+
+@app.post("/api/plannings/auto", dependencies=[Depends(acces_bureau)])
+async def api_plannings_auto_maintenant(c=Depends(db)):
+    """Le bouton « relire maintenant » : sans attendre les cinq minutes."""
+    await asyncio.to_thread(plannings_relus)
+    return depot_auto.etat(c)
+
+
 @app.post("/api/plannings", dependencies=[Depends(acces_bureau)])
 async def api_plannings(fichier: UploadFile = File(...), c=Depends(db)):
     """Dépôt d'un planning Excel : atelier ou pose de la serrurerie."""
@@ -374,6 +399,7 @@ def api_rhi(personne: str | None = None, semaine: str | None = None, c=Depends(d
     a = maintenant()
     releves = [base.rhi(c, n, lundi, a) for n in noms]
     return {"lundi": lundi.isoformat(), "releves": releves,
+            "controle": base.controle_semaine(c, lundi, a, releves),
             "oublis": [o for o in base.oublis(c, lundi, a) if o["personne"] in noms],
             "temps_perdu": base.temps_perdu(c, lundi, a)}
 

@@ -98,7 +98,7 @@ Personnes de RHI.*
 | Sans numéro d'affaire | Un « CH DIVERS », à créer dans InterFast, avec transfert des heures vers le bon CH | **fait** dès son numéro réglé (`RHI_CH_DIVERS`) ; transfert depuis « À vérifier » |
 | Validation | Chaque chargé d'affaires vérifie ses chantiers et la cohérence avec le planning ; le responsable de BU vérifie le planning final général | **fait** : onglet « Mes chantiers », puis validation (`banc-controles`) |
 | Chargés d'affaires | Normalement renseignés sur chaque chantier dans InterFast (à vérifier) ; trois noms sinon | à lire dans InterFast |
-| Point d'affaire | InterFast doit porter toutes les heures engagées ; le chargé d'affaires estime le reste à faire ; engagé + reste face au chiffrage = dérapage | **fait** : point d'affaire, colonnes Reste et Projeté (`banc-reste`) ; porter toutes les heures dans InterFast attend l'essai d'écriture |
+| Point d'affaire | InterFast doit porter toutes les heures engagées ; le chargé d'affaires estime le reste à faire ; engagé + reste face au chiffrage = dérapage | **fait** : point d'affaire, colonnes Reste et Projeté (`banc-reste`) ; porter toutes les heures dans InterFast attend l'essai d'écriture. **Revue du 01/10** : l'écran est retiré, le point d'affaire se lit dans InterFast |
 | Taux | Un taux atelier et un taux pose, bibliothèque InterFast ; **ce sont les heures qui comptent**, pas le taux | le coût reste secondaire |
 | Affaire de test InterFast | `CH00066` | pour l'essai d'écriture |
 | Synthèse du lundi | À Alexis seulement (`RHI_MARCHE_A`) | réglage Clever |
