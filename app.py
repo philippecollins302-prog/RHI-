@@ -132,9 +132,6 @@ def en_production() -> bool:
     return bool(os.getenv("CC_APP_ID") or os.getenv("RHI_PRODUCTION"))
 
 
-LONGUEUR_BUREAU = 12
-
-
 def reglage_des_codes() -> str | None:
     """Ce qui cloche dans les codes, ou None. Échoue FERMÉ : un seul code
     posé ouvrait tout le bureau (sauvegarde de la base comprise) à Internet
@@ -148,8 +145,8 @@ def reglage_des_codes() -> str | None:
         return "RHI_CODE_TERRAIN absent"
     if t == b:
         return "codes terrain et bureau identiques"
-    if en_production() and len(b) < LONGUEUR_BUREAU:
-        return f"code bureau trop court ({LONGUEUR_BUREAU} caractères au moins)"
+    # Pas de longueur minimale : elle a tenu le site fermé deux jours sur un
+    # code que Philippe ne voulait pas changer (décision du 02/10/2026).
     return None
 
 
