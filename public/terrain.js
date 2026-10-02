@@ -90,7 +90,11 @@ async function accueil() {
           ${esc(p.nom)}<small>${t ? '⏱ ' + esc(t.ch || t.motif) + ' ' + esc(t.chantier) : '—'}</small></button>`;
       }).join('')}
     </div>
-    ${pose ? `<p><button class="valider" id="valider" style="width:100%">C'est nous → nos chantiers</button></p>` : ''}
+    ${pose ? `<p class="doux">Touche le nom de chacun de ceux qui partent ensemble — <strong>seul, touche
+      seulement le tien</strong>. Un nom touché une deuxième fois se retire.</p>
+      <p><button id="autres">＋ Quelqu'un d'une autre équipe (atelier, intérimaire…)</button></p>
+      <div class="grille" id="autres-noms"></div>
+      <p><button class="valider" id="valider" style="width:100%">C'est nous → nos chantiers</button></p>` : ''}
     <p class="doux" style="margin-top:32px">Appareil ${esc(APPAREIL)} · mode ${esc(etat.mode)} ·
       <a href="#" id="remode">changer</a> · <a href="/mode-emploi.html">mode d'emploi</a></p>`;
   document.querySelectorAll('[data-nom]').forEach((b) => b.onclick = () => {
@@ -99,6 +103,27 @@ async function accueil() {
     etat.choix.has(nom) ? etat.choix.delete(nom) : etat.choix.add(nom);
     b.classList.toggle('choisi');
   });
+  // Revue du 01/10/2026 : « par défaut c'est une équipe, mais si le binôme
+  // part renforcer quelqu'un, il faut pouvoir être seul — et pouvoir ajouter
+  // un intérimaire ou le binôme d'un autre sur ce téléphone ».
+  if (pose) $('#autres').onclick = async () => {
+    let tous;
+    try {
+      tous = await api('/api/personnes');
+      ecrire('rhi.c.personnes.tous', JSON.stringify(tous));
+    } catch (e) { tous = lireJson('rhi.c.personnes.tous', []); }
+    const deja = new Set(liste.map((p) => p.nom));
+    const autres = tous.filter((p) => !deja.has(p.nom));
+    $('#autres').hidden = true;
+    $('#autres-noms').innerHTML = autres.length ? autres.map((p) => `
+      <button class="gros ${etat.choix.has(p.nom) ? 'choisi' : ''}" data-autre="${esc(p.nom)}">${esc(p.nom)}<small>${esc(p.equipe)}</small></button>`).join('')
+      : '<div class="rien">Personne d\'autre. Un intérimaire s\'ajoute au bureau (onglet Personnes).</div>';
+    document.querySelectorAll('[data-autre]').forEach((b) => b.onclick = () => {
+      const nom = b.dataset.autre;
+      etat.choix.has(nom) ? etat.choix.delete(nom) : etat.choix.add(nom);
+      b.classList.toggle('choisi');
+    });
+  };
   if (pose) $('#valider').onclick = () => {
     if (!etat.choix.size) { dire('Touche au moins un nom'); return; }
     ecrire('rhi.equipe', JSON.stringify([...etat.choix]));
@@ -217,7 +242,8 @@ function dessiner() {
           ${etat.enCours.length > 1 ? `<div class="doux">${etat.enCours.length} personnes pointent</div>` : ''}</div>
         <div class="chrono" id="chrono" data-debut="${esc(actuel.debut)}">0:00:00</div>
         <button class="stop" id="stop">J'arrête</button>
-      </div>` : `<div class="rien">Rien ne tourne. Touche le chantier sur lequel tu démarres.</div>`}
+      </div>` : `<div class="rien">Rien ne tourne. Touche le chantier sur lequel tu démarres.${etat.mode === 'pose'
+        ? '<br><strong>Du dépôt : en partant. De chez toi : en arrivant sur le chantier.</strong>' : ''}</div>`}
 
     ${m.mes_heures ? `<p class="doux mes-heures">${esc(etat.personnes.length > 1 ? etat.personnes[0] + ' : ' : '')}pointé
       aujourd'hui ${heures(m.mes_heures.jour) || '0h'} · cette semaine ${heures(m.mes_heures.semaine) || '0h'}</p>` : ''}

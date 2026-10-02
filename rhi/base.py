@@ -202,6 +202,14 @@ CREATE TABLE IF NOT EXISTS cases_interfast (
   num INTEGER,                     -- id interne InterFast (1819630), trouvé à la relecture
   PRIMARY KEY (ch, jour)
 );
+CREATE TABLE IF NOT EXISTS depots_auto (
+  source TEXT PRIMARY KEY,         -- « hôte · empreinte du lien » : jamais le lien (il porte un jeton)
+  sha TEXT,                        -- empreinte du dernier fichier importé
+  nature TEXT NOT NULL DEFAULT '', -- atelier | pose | bet
+  importe_le TEXT,
+  vu_le TEXT NOT NULL,
+  statut TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS courriers (
   jour TEXT NOT NULL,
   quoi TEXT NOT NULL,              -- 'marche'
@@ -283,6 +291,10 @@ AJOUTS = {
     # ligne, rejoué au retour du réseau.
     "pointages": [("recu", "TEXT")],
     "cases_interfast": [("num", "INTEGER")],
+    # Le fond de la case dans l'Excel d'Alexis (« #RRGGBB ») et la bande
+    # (l'équipe de pose « LUC & MARC », le nom à l'atelier) : l'écran du mur
+    # rend le planning de la semaine comme les gars ont l'habitude de le lire.
+    "planning": [("couleur", "TEXT"), ("equipe", "TEXT NOT NULL DEFAULT ''")],
     # Pour la marche en avant : semaines de fab et commentaire du plan de charge.
     "lignes_prevues": [("semaines", "TEXT NOT NULL DEFAULT ''"), ("commentaire", "TEXT NOT NULL DEFAULT ''"),
                        ("chantier", "TEXT NOT NULL DEFAULT ''")],
@@ -348,8 +360,10 @@ def importer(db, donnees: dict) -> dict:
         for a in donnees["affectations"]:
             noms = chantiers_de(a["libelle"], a["codes"])
             for ch in (a["codes"] or [None]):
-                db.execute("INSERT INTO planning VALUES (?,?,?,?,?)",
-                           (a["personne"], a["jour"].isoformat(), ch, a["libelle"], origine))
+                db.execute("""INSERT INTO planning(personne, jour, ch, libelle, origine, couleur, equipe)
+                              VALUES (?,?,?,?,?,?,?)""",
+                           (a["personne"], a["jour"].isoformat(), ch, a["libelle"], origine,
+                            a.get("couleur"), a.get("equipe") or a["personne"]))
                 if ch:
                     db.execute("""INSERT INTO affaires(ch, chantier, source, maj)
                                   VALUES (?,?, 'planning', ?)
@@ -780,7 +794,53 @@ def ecran(db, jour: dt.date) -> dict:
            LEFT JOIN affaires a ON a.ch = t.ch
            WHERE t.fin >= ? AND t.debut <= ? ORDER BY t.debut""",
         (lundi.isoformat(), (lundi + dt.timedelta(days=6)).isoformat()))]
-    return {"jour": jour.isoformat(), "atelier": atelier, "pose": pose, "traitement": traitement}
+    return {"jour": jour.isoformat(), "atelier": atelier, "pose": pose, "traitement": traitement,
+            "semaine": planning_semaine(db, lundi, tourne)}
+
+
+def planning_semaine(db, lundi: dt.date, tourne: dict) -> dict:
+    """Le planning de la semaine, du lundi au vendredi, une ligne par bande.
+
+    Revue du 01/10/2026 : « Je ne veux pas ce qu'ils sont en train de faire
+    sur l'écran, je veux le planning de la semaine — comme on les a habitués,
+    avec le conducteur, le numéro d'affaire, et les codes couleurs ». Une
+    ligne par personne à l'atelier, par équipe en pose ; chaque case garde la
+    couleur de l'Excel. Les jours passés restent : la semaine se lit en entier."""
+    jours = [(lundi + dt.timedelta(days=i)).isoformat() for i in range(5)]
+    sortie = {}
+    for origine in ("atelier", "pose"):
+        bandes = {}
+        if origine == "atelier":
+            for p in personnes(db, "atelier"):
+                bandes[p["nom"]] = {"nom": p["nom"], "personnes": [p["nom"]], "cases": [[] for _ in jours]}
+        for r in db.execute(
+                """SELECT pl.personne, pl.jour, pl.ch, pl.libelle, pl.couleur,
+                          COALESCE(NULLIF(pl.equipe, ''), pl.personne) AS bande,
+                          COALESCE(a.chantier, '') AS chantier, COALESCE(a.conduc, '') AS conduc
+                   FROM planning pl LEFT JOIN affaires a ON a.ch = pl.ch
+                   WHERE pl.origine = ? AND pl.jour >= ? AND pl.jour <= ?
+                   ORDER BY pl.rowid""", (origine, jours[0], jours[-1])):
+            if origine == "atelier" and r["bande"] not in bandes:
+                continue   # parti de l'atelier (inactif) : pas sur le mur
+            b = bandes.setdefault(r["bande"], {"nom": r["bande"], "personnes": [], "cases": [[] for _ in jours]})
+            if r["personne"] not in b["personnes"]:
+                b["personnes"].append(r["personne"])
+            case = {"ch": r["ch"], "libelle": r["libelle"], "chantier": r["chantier"],
+                    "conduc": r["conduc"], "couleur": r["couleur"]}
+            liste = b["cases"][jours.index(r["jour"])]
+            if case not in liste:
+                liste.append(case)
+        for b in bandes.values():
+            t = next((tourne[p] for p in b["personnes"] if p in tourne), None)
+            b["en_cours"] = {k: t[k] for k in ("ch", "motif", "chantier", "debut")} if t else None
+        # Dans l'ordre de l'Excel (une bande par poste, une par équipe) : les
+        # gars se cherchent là où ils ont l'habitude de se trouver.
+        rang = {}
+        for r in db.execute("""SELECT COALESCE(NULLIF(equipe, ''), personne) AS bande, MIN(rowid) AS r
+                               FROM planning WHERE origine = ? GROUP BY bande""", (origine,)):
+            rang[r["bande"]] = r["r"]
+        sortie[origine] = sorted(bandes.values(), key=lambda b: (rang.get(b["nom"], 10 ** 9), b["nom"]))
+    return {"jours": jours} | sortie
 
 
 # ═══════════════════════ POINTAGE ═══════════════════════
@@ -989,6 +1049,74 @@ def rhi(db, personne: str, lundi: dt.date, a: dt.datetime) -> dict:
             "par_jour": par_jour, "total": total, "hors_affaire": hors,
             "pointages": detail,
             "a_verifier": sum(1 for p in detail if p["alertes"])}
+
+
+# Les heures d'une journée normale, du lundi au dimanche : 39 h = 4 × 8 h + 7 h
+# le vendredi. Réglable (RHI_HEURES_JOUR=« 8,8,8,8,7 ») : c'est la référence
+# du contrôle de la semaine, pas une règle de paie.
+HEURES_JOUR_DEFAUT = "8,8,8,8,7"
+TOLERANCE_H = 0.25   # un quart d'heure d'écart sur la journée ne se signale pas
+
+
+def heures_reference() -> list:
+    """[lun … dim]. « 8,8,8,8,7 » ou, avec des demi-heures, « 8;8;8;8;7,5 ».
+    Illisible : la valeur par défaut, plutôt qu'un contrôle faux."""
+    brut = os.getenv("RHI_HEURES_JOUR", HEURES_JOUR_DEFAUT)
+    morceaux = brut.split(";") if ";" in brut else brut.split(",")
+    try:
+        v = [float(x.strip().replace(",", ".")) for x in morceaux if x.strip()]
+    except ValueError:
+        v = []
+    if not v or len(v) > 7 or any(h < 0 or h > 14 for h in v):
+        v = [float(x) for x in HEURES_JOUR_DEFAUT.split(",")]
+    return (v + [0.0] * 7)[:7]
+
+
+def controle_semaine(db, lundi: dt.date, a: dt.datetime, releves: list = None) -> dict:
+    """La semaine de TOUS les gars, jour par jour (revue avec Alexis, 01/10/2026).
+
+    « Moi je m'en fous des chantiers, si eux ils les ont validés, je sais
+    qu'il n'en manque pas. Il me faut la liste de tous les gars : lundi 8 h,
+    mardi 8 h. Si je vois 9 h, je sais qu'il y en a un qui a tapé un peu
+    plus. » Le second étage du contrôle : les chargés d'affaires ont vu leurs
+    CH ; le responsable de BU voit ici que chaque journée de chacun est
+    pleine, et les heures en plus. Une ligne par personne active, même sans
+    une heure : c'est elle qu'il ne faut pas louper."""
+    ref = heures_reference()
+    releves = releves if releves is not None else [rhi(db, p["nom"], lundi, a) for p in personnes(db)]
+    equipes = {p["nom"]: p["equipe"] for p in personnes(db)}
+    prevus = {(o["personne"], o["jour"]) for o in oublis(db, lundi, a)}
+    ouverts = {p["personne"] for p in en_cours(db)}
+    aujourdhui = a.date()
+    lignes = []
+    for r in releves:
+        jours = []
+        for i, h in enumerate(r["par_jour"]):
+            jour = lundi + dt.timedelta(days=i)
+            if jour > aujourdhui:
+                etat = "a_venir" if not h else "plus"
+            elif jour == aujourdhui:
+                etat = "aujourdhui"
+            elif not h:
+                etat = "manque" if (r["personne"], jour.isoformat()) in prevus else ("vide" if not ref[i] else "rien")
+            elif h > ref[i] + TOLERANCE_H:
+                etat = "plus"
+            elif h < ref[i] - TOLERANCE_H:
+                etat = "moins"
+            else:
+                etat = "ok"
+            jours.append({"jour": jour.isoformat(), "heures": h, "etat": etat})
+        # La semaine se juge sur les jours écoulés : un mercredi, 24 h n'est pas un trou.
+        attendu = round(sum(ref[i] for i in range(7) if lundi + dt.timedelta(days=i) < aujourdhui), 2)
+        fait = round(sum(j["heures"] for j in jours if dt.date.fromisoformat(j["jour"]) < aujourdhui), 2)
+        ecart = round(fait - attendu, 2)
+        lignes.append({"personne": r["personne"], "equipe": equipes.get(r["personne"], ""),
+                       "jours": jours, "total": r["total"], "attendu": attendu, "ecart": ecart,
+                       "juste": abs(ecart) <= TOLERANCE_H and not any(j["etat"] in ("manque", "rien", "moins", "plus") for j in jours),
+                       "a_verifier": r["a_verifier"], "en_cours": r["personne"] in ouverts,
+                       "validee": r["validee"]})
+    lignes.sort(key=lambda l: (l["equipe"], l["personne"]))
+    return {"reference": ref, "semaine": round(sum(ref), 2), "lignes": lignes}
 
 
 def oublis(db, lundi: dt.date, a: dt.datetime) -> list:

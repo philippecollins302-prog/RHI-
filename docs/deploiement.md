@@ -159,7 +159,10 @@ relié à l'application `rhi`. Noter son hôte
 | `RHI_CODE_TERRAIN` | le code des tablettes et téléphones (à choisir) |
 | `RHI_CODE_BUREAU` | le code du bureau : différent, **12 caractères au moins** |
 | `RHI_COUT_HORAIRE` | le taux horaire moyen chargé, en €/h (en attendant les coûts par personne) |
-| `RHI_MARCHE_A` | destinataires de la marche en avant du lundi 7 h (adresses séparées par des virgules) |
+| `RHI_MARCHE_A` | destinataires de la synthèse marche en avant (adresses séparées par des virgules) — l'envoi du lundi est éteint depuis la revue du 01/10 : la marche en avant part chez un agent à part |
+| `RHI_PLANNINGS_URL` | liens de **téléchargement direct** des plannings ATE et POSE (séparés par des virgules ou des retours à la ligne) : RHI les relit tout seul ; vide = dépôt à la main |
+| `RHI_PLANNINGS_MINUTES` | tous les combien RHI relit ces liens (5 par défaut) |
+| `RHI_HEURES_JOUR` | la journée normale, du lundi au vendredi (`8,8,8,8,7` par défaut) : base des écarts du RHI |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
 | `INTERFAST_VIP` | la clé InterFast de VIP Plus — **régénérée** dans InterFast avant la mise en production (l'ancienne a circulé en clair) |
 

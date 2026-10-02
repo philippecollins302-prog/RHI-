@@ -8,6 +8,8 @@ cases fusionnées, noms au samedi, erreurs de date dans l'en-tête, bande
 import datetime as dt
 
 import openpyxl
+from openpyxl.styles import PatternFill
+from openpyxl.styles.colors import Color
 
 
 def atelier(chemin):
@@ -56,6 +58,10 @@ def atelier(chemin):
 
     bande(3, "PAUL", {2: ("LES PINS\nGARDE-CORPS (X4)", "CH00901", 3),
                       5: ("LE PORT\nPORTAIL COULISSANT", "CH00902", 2)})
+    # Les couleurs d'Alexis : en clair (orange, « matériel pas arrivé ») et par
+    # le thème avec une nuance (le bouton de couleur d'Excel, le plus courant).
+    fab.cell(3, 2).fill = PatternFill("solid", fgColor="FFC000")
+    fab.cell(3, 5).fill = PatternFill("solid", fgColor=Color(theme=5, tint=0.6))
     bande(7, "JEAN", {2: ("CP", None, 1), 3: ("LE PORT\nPORTAIL", "CH00902/CH00901", 1)})
     fab.cell(11, 7, "SOUS TRAITANT - TOTO")
     wb.save(chemin)
@@ -73,6 +79,7 @@ def pose(chemin):
     ws["A6"] = "POSE IMPERATIVE"
     ws["A7"] = "Conduc."
     ws.cell(4, 29, "LES PINS\nGARDE-CORPS")      # 28/09, sur deux jours
+    ws.cell(4, 29).fill = PatternFill("solid", fgColor="92D050")
     ws.merge_cells(start_row=4, start_column=29, end_row=4, end_column=30)
     ws.cell(5, 29, "CH00901")
     ws.merge_cells(start_row=5, start_column=29, end_row=5, end_column=30)

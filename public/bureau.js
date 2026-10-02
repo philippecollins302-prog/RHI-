@@ -49,9 +49,12 @@ async function afficher() {
   if (actif) $('#titre-page').textContent = actif.lastChild.textContent;
   $('#vue').innerHTML = '<p class="doux">Chargement…</p>';
   try {
-    await ({chantiers: ongletChantiers, rhi: ongletRhi, verifier: ongletVerifier, affaires: ongletAffaires,
+    // Le point d'affaire et la marche en avant sont partis le 01/10/2026 (revue
+    // avec Alexis) : le premier vit dans InterFast, la seconde chez un agent à
+    // part. Un onglet mémorisé qui n'existe plus retombe sur le RHI.
+    await ({chantiers: ongletChantiers, rhi: ongletRhi, verifier: ongletVerifier,
             direct: ongletDirect, plannings: ongletPlannings,
-            personnes: ongletPersonnes, envois: ongletEnvois, marche: ongletMarche}[vue.onglet] || ongletRhi)();
+            personnes: ongletPersonnes, envois: ongletEnvois}[vue.onglet] || ongletRhi)();
   } catch (e) {
     $('#vue').innerHTML = `<div class="rien">Erreur : ${esc(e.message)}</div>`;
   }
@@ -101,11 +104,48 @@ async function ongletChantiers() {
   });
 }
 
-// ── RHI : une carte par personne, une ligne par CH, une colonne par jour ──
+// ── RHI : le contrôle du responsable de BU (revue avec Alexis, 01/10/2026) ──
+// D'abord TOUS les gars, jour par jour : « lundi 8 h, mardi 8 h ; si je vois
+// 9 h, je sais qu'il y en a un qui a tapé plus ». Les chantiers, les chargés
+// d'affaires les ont déjà contrôlés : leur détail est replié dessous.
+const ETAT_JOUR = {ok: '', plus: 'j-plus', moins: 'j-moins', manque: 'j-manque', rien: 'j-manque',
+  vide: 'j-vide', a_venir: 'j-vide', aujourdhui: 'j-auj'};
+const TITRE_JOUR = {plus: 'plus que la journée normale', moins: 'moins que la journée normale',
+  manque: 'prévu au planning, rien pointé', rien: 'rien pointé', aujourdhui: "aujourd'hui : pas fini", a_venir: 'à venir'};
+function ecartTexte(e) {
+  return (e > 0 ? '+' : e < 0 ? '−' : '') + (heures(Math.abs(e)) || '0h');
+}
+function grilleControle(c, lundi) {
+  const jours = [0, 1, 2, 3, 4, 5, 6].filter((i) => i < 5 || c.lignes.some((l) => l.jours[i].heures));
+  const date = (i) => { const x = new Date(lundi + 'T12:00'); x.setDate(x.getDate() + i); return x.getDate(); };
+  return `<div class="carte controle">
+    <h3>Toute l'équipe, jour par jour</h3>
+    <p class="doux">Une journée normale : ${esc(c.reference.slice(0, 5).map((h) => heures(h)).join(' · '))}
+      (${esc(heures(c.semaine))} la semaine). <span class="j-plus legende">en plus</span>
+      <span class="j-moins legende">en moins</span> <span class="j-manque legende">rien pointé</span>.
+      Une case : le détail de la personne, plus bas.</p>
+    <div class="defile"><table>
+      <tr><th>Qui</th>${jours.map((i) => `<th class="n">${esc(JOURS[i])} ${esc(date(i))}</th>`).join('')}
+        <th class="n">Total</th><th class="n">Écart</th><th></th></tr>
+      ${c.lignes.map((l) => `<tr${l.juste ? '' : ' class="a-voir"'}>
+        <td><strong>${esc(l.personne)}</strong> <span class="doux">${esc(l.equipe)}</span>
+          ${l.en_cours ? '<span class="pastille p-vert" title="pointe en ce moment">⏱</span>' : ''}
+          ${l.a_verifier ? `<span class="pastille p-ambre">${esc(l.a_verifier)} à vérifier</span>` : ''}</td>
+        ${jours.map((i) => { const j = l.jours[i]; return `<td class="n ${esc(ETAT_JOUR[j.etat] || '')}"
+          title="${esc(TITRE_JOUR[j.etat] || '')}"><a href="#detail-${esc(l.personne)}">${j.heures ? heures(j.heures) : (j.etat === 'manque' || j.etat === 'rien' ? '0h' : '—')}</a></td>`; }).join('')}
+        <td class="n"><strong>${heures(l.total) || '0h'}</strong></td>
+        <td class="n">${l.attendu ? `<span class="pastille ${Math.abs(l.ecart) <= 0.25 ? 'p-vert' : 'p-ambre'}">${esc(ecartTexte(l.ecart))}</span>` : ''}</td>
+        <td>${l.validee
+          ? `<span class="pastille p-vert">✓ ${esc(l.validee.par)}</span> <button data-devalider="${esc(l.personne)}">Dévalider</button>`
+          : l.total ? `<button data-valider="${esc(l.personne)}">Valider la semaine</button>` : ''}</td>
+      </tr>`).join('')}
+    </table></div>
+  </div>`;
+}
+
 async function ongletRhi() {
   const d = await api('/api/rhi?semaine=' + vue.semaine);
   const pleins = d.releves.filter((r) => r.total > 0);
-  const vides = d.releves.filter((r) => r.total === 0).map((r) => r.personne);
   const tp = d.temps_perdu;
   const bilan = vue.bilan;
   vue.bilan = null;
@@ -123,16 +163,13 @@ async function ongletRhi() {
       <span class="doux">sur ${heures(tp.total) || '0h'} pointées (${esc(tp.part)} %)</span>
       ${tp.motifs.map((m) => `<br><span class="pastille p-ambre">${esc(m.libelle)} · ${heures(m.heures)}</span>
         <span class="doux">${esc(m.qui.map((q) => q[0] + ' ' + heures(q[1])).join(', '))}</span>`).join('')}
-    </div>` : '<div class="rien">Aucune heure pointée cette semaine.</div>') +
+    </div>` : '') + grilleControle(d.controle, d.lundi) +
+    (pleins.length ? '<h2>Le détail par chantier</h2>' : '<div class="rien">Aucune heure pointée cette semaine.</div>') +
     pleins.map((r) => `
-    <div class="carte">
-      <strong style="font-size:20px">${esc(r.personne)}</strong>
-      <span class="doux"> · ${heures(r.total)} dont ${heures(r.hors_affaire) || '0h'} hors affaire</span>
-      ${r.a_verifier ? `<span class="pastille p-ambre">${r.a_verifier} à vérifier</span>` : ''}
-      ${r.validee
-        ? `<span class="pastille p-vert">✓ validé par ${esc(r.validee.par)} le ${esc(r.validee.le.slice(0, 10))}</span>
-           <button data-devalider="${esc(r.personne)}">Dévalider</button>`
-        : `<button data-valider="${esc(r.personne)}">Valider la semaine</button>`}
+    <details class="carte" id="detail-${esc(r.personne)}">
+      <summary><strong>${esc(r.personne)}</strong>
+        <span class="doux"> · ${heures(r.total)} dont ${heures(r.hors_affaire) || '0h'} hors affaire</span>
+        ${r.validee ? `<span class="pastille p-vert">✓ validé par ${esc(r.validee.par)} le ${esc(r.validee.le.slice(0, 10))}</span>` : ''}</summary>
       <div class="defile"><table>
         <tr><th>CH</th><th>Chantier / motif</th>${JOURS.map((j) => `<th class="n">${j}</th>`).join('')}<th class="n">Total</th></tr>
         ${r.lignes.map((l) => `<tr><td class="ch">${esc(l.ch || l.ch_impute || '—')}</td><td>${esc(l.libelle)}
@@ -141,8 +178,12 @@ async function ongletRhi() {
           ${l.jours.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n"><strong>${heures(l.total)}</strong></td></tr>`).join('')}
         <tr class="total"><td></td><td>Total</td>${r.par_jour.map((h) => `<td class="n">${heures(h)}</td>`).join('')}<td class="n">${heures(r.total)}</td></tr>
       </table></div>
-    </div>`).join('') +
-    (vides.length ? `<p class="doux">Rien pointé cette semaine : ${esc(vides.join(', '))}</p>` : '');
+    </details>`).join('');
+  // Une case de la grille ouvre le détail de la personne.
+  document.querySelectorAll('.controle a[href^="#detail-"]').forEach((a) => a.onclick = () => {
+    const x = document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1)));
+    if (x) x.open = true;
+  });
   brancherSemaine();
   if ($('#imprimer')) $('#imprimer').onclick = () => imprimerRhi(pleins, d.lundi);
   const signataire = () => {
@@ -283,117 +324,43 @@ async function ongletVerifier() {
   });
 }
 
-// ── Point d'affaire : réel face au prévu du plan de charge ──
-async function ongletAffaires() {
-  const liste = await api('/api/affaires');
-  $('#vue').innerHTML = `
-    <p class="doux">Heures réelles pointées face aux heures prévues du plan de charge atelier
-      (fabrication seulement : la pose n'a pas de prévu chiffré dans les plannings).
-      <strong>Projeté</strong> = heures engagées + reste à faire estimé par le chargé d'affaires,
-      face au chiffrage (ou, à défaut, au prévu fab). Cliquer un CH pour estimer son reste.</p>
-    <div class="defile"><table>
-      <tr><th>CH</th><th>Chantier</th><th>Client</th><th>Conduc.</th><th class="n">Réel</th><th class="n">Prévu fab</th><th class="n">Consommé</th><th class="n">Reste</th><th class="n">Projeté</th><th class="n">Coût MO</th><th class="n">Vendu HT</th><th class="n">MO / vendu</th></tr>
-      ${liste.map((a) => {
-        const p = a.consomme_pct;
-        const cl = p === null ? '' : p > 100 ? 'p-rouge' : p > 80 ? 'p-ambre' : 'p-vert';
-        return `<tr><td><a href="#" data-ch="${esc(a.ch)}" class="ch">${esc(a.ch)}</a></td><td>${esc(a.chantier)}</td>
-          <td class="doux">${esc(a.client || '')}</td><td>${esc(a.conduc)}</td><td class="n">${heures(a.heures_reelles) || '—'}</td>
-          <td class="n">${a.heures_prevues ? heures(a.heures_prevues) : '—'}</td>
-          <td class="n">${p === null ? '' : `<span class="pastille ${cl}">${esc(p)} %</span>`}</td>
-          <td class="n">${a.reste === null ? '<span class="doux">—</span>' : heures(a.reste) || '0h'}${a.depassee ? ' <span class="pastille p-ambre">dépassé</span>' : ''}</td>
-          <td class="n">${a.projete === null ? '' : a.niveau ? `<span class="pastille ${esc(PASTILLE_DERIVE[a.niveau])}">${esc(a.derive_pct)} %</span>` : heures(a.projete)}</td>
-          <td class="n">${a.cout_main_oeuvre ? euros(a.cout_main_oeuvre) : ''}</td>
-          <td class="n">${a.vendu_ht ? euros(a.vendu_ht) : '<span class="doux">—</span>'}</td>
-          <td class="n">${a.part_mo_pct === null ? '' : esc(String(a.part_mo_pct).replace('.', ',')) + ' %'}</td></tr>`;
-      }).join('')}
-    </table></div><div id="detail"></div>`;
-  document.querySelectorAll('[data-ch]').forEach((a) => a.onclick = async (e) => {
-    e.preventDefault();
-    afficherAffaire(a.dataset.ch);
-  });
-}
-
-const PASTILLE_DERIVE = {vert: 'p-vert', ambre: 'p-ambre', rouge: 'p-rouge'};
-
-function blocReste(d) {
-  const r = d.reste_a_faire;
-  const e = r.estimation;
-  return `<div class="carte" style="margin-top:12px">
-    <strong>Reste à faire</strong>
-    <p>Engagé : <strong>${heures(r.engage) || '0h'}</strong> · Référence : ${r.reference ? `${heures(r.reference)} (${esc(r.reference_nature)})` : '<span class="doux">aucune référence : saisir les heures chiffrées</span>'}
-      ${e ? `<br>Estimé le ${esc(e.le.slice(8, 10) + '/' + e.le.slice(5, 7))} par ${esc(e.par)} : ${heures(e.heures) || '0h'}
-        — ${heures(r.pointe_depuis) || '0h'} pointées depuis, reste <strong>${heures(r.reste) || '0h'}</strong>
-        ${r.depassee ? ' <span class="pastille p-ambre">estimation dépassée : à refaire</span>' : ''}
-        <br>Projeté : <strong>${heures(r.projete) || '0h'}</strong>
-        ${r.niveau ? ` <span class="pastille ${esc(PASTILLE_DERIVE[r.niveau])}">${esc(r.derive_pct)} % — écart ${r.ecart > 0 ? '+' : ''}${esc(String(r.ecart).replace('.', ','))} h</span>` : ''}`
-        : '<br><span class="doux">Pas encore estimé.</span>'}</p>
-    <div class="ligne">
-      <label>Reste (h) <input id="raf-heures" type="number" min="0" step="0.5" style="width:90px"></label>
-      <label>Heures chiffrées <input id="raf-chiffrees" type="number" min="0" step="0.5" style="width:90px" value="${esc(r.heures_chiffrees ?? '')}"></label>
-      <label>Qui <input id="raf-qui" style="width:70px" value="${esc(lire('rhi.conduc', '') || d.conduc || '')}"></label>
-      <label>Note <input id="raf-note" style="width:220px" maxlength="200"></label>
-      <button id="raf-ok">Enregistrer l'estimation</button>
-    </div>
-    ${r.historique.length > 1 ? `<details><summary class="doux">Estimations précédentes</summary><table>
-      <tr><th>Le</th><th>Qui</th><th class="n">Engagé</th><th class="n">Reste</th><th>Note</th></tr>
-      ${r.historique.map((h) => `<tr><td>${esc(h.le.slice(0, 10))}</td><td>${esc(h.par)}</td>
-        <td class="n">${heures(h.engage) || '0h'}</td><td class="n">${heures(h.heures) || '0h'}</td><td class="doux">${esc(h.note)}</td></tr>`).join('')}
-    </table></details>` : ''}
-  </div>`;
-}
-
-async function afficherAffaire(ch) {
-  const d = await api('/api/affaires/' + ch);
-  $('#detail').innerHTML = `<div class="carte" style="margin-top:16px">
-    <div class="ch">${esc(d.ch)}</div><strong style="font-size:20px">${esc(d.chantier)}</strong>
-    <p>${heures(d.heures_reelles) || '0h'} pointées${d.heures_prevues ? ' sur ' + heures(d.heures_prevues) + ' prévues' : ''}.
-      ${d.cout_main_oeuvre ? `<br>Coût main-d'œuvre : <strong>${euros(d.cout_main_oeuvre)}</strong>` : ''}
-      ${d.vendu_ht ? `<br>Vendu HT (devis signés ou payés ${esc(d.devis_refs)}) : <strong>${euros(d.vendu_ht)}</strong>`
-        : '<br><span class="doux">Vendu HT : aucun devis signé portant ce CH dans InterFast</span>'}
-      ${d.sans_cout.length ? `<br><span class="pastille p-ambre">Sans coût horaire (non chiffrés) : ${esc(d.sans_cout.join(', '))}</span>` : ''}
-      ${d.heures_en_suspens ? `<span class="pastille p-ambre">${heures(d.heures_en_suspens)} en suspens : arrêt oublié à corriger (onglet À vérifier)</span>` : ''}</p>
-    <div class="ligne" style="align-items:flex-start">
-      <table><tr><th>Qui</th><th class="n">Heures</th></tr>${Object.entries(d.par_personne).map(([k, v]) =>
-        `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
-      <table><tr><th>Semaine</th><th class="n">Heures</th></tr>${Object.entries(d.par_semaine).map(([k, v]) =>
-        `<tr><td>${esc(k)}</td><td class="n">${heures(v)}</td></tr>`).join('')}</table>
-      <table><tr><th>Prévu au plan de charge</th><th class="n">h</th></tr>${d.lignes_prevues.map((l) =>
-        `<tr><td>${esc(l.designation)}</td><td class="n">${l.heures ?? '—'}</td></tr>`).join('')}</table>
-    </div></div>`;
-  $('#detail .carte').insertAdjacentHTML('beforeend', blocReste(d));
-  $('#raf-ok').onclick = async () => {
-    const heuresReste = $('#raf-heures').value;
-    if (heuresReste === '') { dire('Indiquer le reste à faire, en heures'); return; }
-    const corps = {heures: Number(heuresReste), qui: $('#raf-qui').value.trim(), note: $('#raf-note').value};
-    if ($('#raf-chiffrees').value !== '') corps.chiffrees = Number($('#raf-chiffrees').value);
-    try {
-      await api('/api/affaires/' + encodeURIComponent(d.ch) + '/reste', {method: 'POST', json: corps});
-      dire('Estimation enregistrée');
-      await ongletAffaires();
-      afficherAffaire(d.ch);
-    } catch (e) { dire(e.message); }
-  };
-  $('#detail').scrollIntoView();
-}
-
 // ── En ce moment : qui pointe sur quoi ──
 async function ongletDirect() {
   const d = await api('/api/en-cours');
   const now = d.maintenant_ms;
-  $('#vue').innerHTML = d.pointages.length ? `<table>
+  // Revue du 01/10/2026 : personne ne savait ce qu'était cet onglet. Il le dit.
+  $('#vue').innerHTML = '<p class="doux">Ceux dont le chrono tourne en ce moment, sur quel chantier, depuis quand. ' +
+    'Utile pour répondre à « qui est sur mon chantier ? » sans téléphoner.</p>' + (d.pointages.length ? `<table>
     <tr><th>Qui</th><th>CH</th><th>Chantier / motif</th><th>Depuis</th><th class="n">Durée</th></tr>
     ${d.pointages.map((p) => `<tr><td>${esc(p.personne)}</td><td class="ch">${esc(p.ch || '—')}</td>
       <td>${esc(p.chantier || p.libelle || p.motif)}</td><td>${esc(p.debut.slice(11, 16))}</td>
       <td class="n">${duree((now - msDeParis(p.debut)) / 1000)}</td></tr>`).join('')}
-  </table>` : '<div class="rien">Personne ne pointe en ce moment.</div>';
+  </table>` : '<div class="rien">Personne ne pointe en ce moment.</div>');
 }
 
 // ── Plannings : le dépôt des Excel d'Alexis ──
 async function ongletPlannings() {
+  const auto = await api('/api/plannings/auto');
   $('#vue').innerHTML = `
     <div class="carte">
+      <h3>Mise à jour automatique</h3>
+      ${auto.actif ? `<p>RHI relit les plannings du dossier partagé <strong>toutes les ${esc(auto.minutes)} minutes</strong>,
+        et ne les réimporte que s'ils ont changé : un planning enregistré est sur les tablettes quelques minutes plus tard.</p>
+        <div class="defile"><table><tr><th>Fichier</th><th>Type</th><th>Importé le</th><th>Dernier passage</th></tr>
+        ${auto.fichiers.map((f) => `<tr><td class="doux">${esc(f.source)}</td><td>${esc(f.nature || '—')}</td>
+          <td>${esc((f.importe_le || '—').replace('T', ' ').slice(0, 16))}</td>
+          <td><span class="pastille ${f.statut.startsWith('importé') || f.statut === 'inchangé' ? 'p-vert' : 'p-rouge'}">${esc(f.statut)}</span>
+            <span class="doux">${esc(f.vu_le.replace('T', ' ').slice(0, 16))}</span></td></tr>`).join('')}
+        </table></div>
+        <button id="relire-auto">Relire maintenant</button>`
+      : `<p class="doux">Pas encore branchée : il faut un lien de téléchargement direct de chaque planning
+        (OneDrive, SharePoint ou Google Drive) dans la variable <strong>RHI_PLANNINGS_URL</strong> sur Clever.
+        En attendant, on dépose à la main ci-dessous.</p>`}
+    </div>
+    <div class="carte">
+      <h3>Dépôt à la main</h3>
       <p>Déposez le <strong>planning ATE</strong> (atelier) et le <strong>planning POSE SER</strong>.
-        RHI en tire les noms, « mes chantiers du jour » de chacun et les heures prévues par CH.
+        RHI en tire les noms, « mon planning du jour » de chacun et le planning de l'écran du mur.
         Chaque dépôt remplace le précédent du même type ; les heures pointées ne sont jamais touchées.</p>
       <input type="file" id="fichiers" accept=".xlsx" multiple>
       <div id="resultats" style="margin-top:12px"></div>
@@ -402,13 +369,13 @@ async function ongletPlannings() {
       <p><strong>InterFast</strong> : relit tous les chantiers (CH, client, statut). Lecture seule —
         rien n'est écrit dans InterFast. Un chantier « Terminé » n'est plus proposé sur les tablettes.</p>
       <button id="synchro">Relire les chantiers InterFast</button>
-      <button id="montants">Relire les montants vendus</button>
       <div id="synchro-res" style="margin-top:12px"></div>
       <p><a class="btn" href="/api/sauvegarde" id="sauvegarde">⬇ Télécharger toute la base (sauvegarde)</a>
         <span class="doux">Une copie est faite chaque jour sur le serveur ; celle-ci est à garder ailleurs.</span></p>
-      <p class="doux">Vendu HT = devis <em>signés</em> ou <em>payés</em> dont le titre porte le CH (« Import Optima -
-        CH00…»). Un devis sans CH dans son titre n'est pas compté : RHI affiche « — » plutôt que 0 €.</p>
     </div>`;
+  if ($('#relire-auto')) $('#relire-auto').onclick = async () => {
+    try { await api('/api/plannings/auto', {method: 'POST'}); afficher(); } catch (e) { dire(e.message); }
+  };
   $('#sauvegarde').onclick = async (e) => {
     e.preventDefault();
     try {
@@ -419,17 +386,6 @@ async function ongletPlannings() {
       a.download = 'rhi-' + isoParis(Date.now()).slice(0, 16).replace(':', 'h') + '.db';
       a.click();
     } catch (err) { dire('Sauvegarde : ' + err.message); }
-  };
-  $('#montants').onclick = async () => {
-    const sortie = $('#synchro-res');
-    sortie.textContent = 'Lecture des devis, un CH à la fois…';
-    try {
-      const r = await api('/api/interfast/montants', {method: 'POST'});
-      sortie.innerHTML = `<span class="pastille p-vert">✓</span> ${esc(r.avec_vendu)} CH chiffrés sur ${esc(r.lus)}.` +
-        (r.sans_devis_signe.length ? ` <span class="pastille p-ambre">Sans devis signé : ${esc(r.sans_devis_signe.join(', '))}</span>` : '');
-    } catch (err) {
-      sortie.innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(err.message)}`;
-    }
   };
   $('#synchro').onclick = async () => {
     const sortie = $('#synchro-res');
@@ -469,7 +425,7 @@ async function ongletPersonnes() {
     `<option value="${esc(u.id)}" ${u.id === choisi ? 'selected' : ''}>${esc(u.prenom)} ${esc(u.nom)}${u.archive ? ' (archivé)' : ''}</option>`).join('');
   $('#vue').innerHTML = `
     <div class="carte">
-      <p>Le coût horaire chiffre le point d'affaire. Priorité : celui saisi ici, sinon celui d'InterFast
+      <p>Le coût horaire chiffre la main-d'œuvre de chaque chantier. Priorité : celui saisi ici, sinon celui d'InterFast
         (s'il n'est pas à 0), sinon le taux moyen ${d.cout_defaut ? `(<strong>${euros(d.cout_defaut)}</strong>/h)` : '(non réglé : variable RHI_COUT_HORAIRE)'}.</p>
       <p><strong>Ajouter une personne</strong> (un intérimaire) : elle apparaît aussitôt sur les tablettes.</p>
       <input id="nouveau-nom" placeholder="NOM Prénom" maxlength="40" style="width:220px">
@@ -524,7 +480,10 @@ async function ongletPersonnes() {
   };
 }
 
-// ── Vers InterFast : les cases du planning, une par CH et par jour ──
+// ── Vers InterFast : les heures vers les comptes des chantiers ──
+// Revue du 01/10/2026 : « il faut pas que ça tombe sur le planning, il faut que
+// ça tombe sur les comptes ». Elles y tombent : la case du planning n'est que
+// la seule porte qu'InterFast ouvre aux heures (docs/interfast.md).
 async function ongletEnvois() {
   const d = await api('/api/interfast/envois?semaine=' + vue.semaine);
   const cl = {'prête': 'p-vert', 'bloquée': 'p-rouge', 'en attente': 'p-ambre', 'posée': 'p-ambre',
@@ -539,11 +498,13 @@ async function ongletEnvois() {
       <td class="n">${e.interfast === null ? '—' : heures(e.interfast)}${e.ecart ? ' <span class="pastille p-rouge">écart</span>' : ''}</td></tr>`;
   $('#vue').innerHTML = choixSemaine() + `
     <div class="carte">
-      <p>Les heures entrent dans InterFast comme des <strong>cases du planning</strong> : une par CH et par jour,
-        avec toute l'équipe. RHI pose la case ; dans InterFast, on la <strong>termine</strong> en recopiant
-        les heures de chacun (début, fin, pause), puis on <strong>valide la feuille de temps</strong>
-        (Équipe → la fiche → Feuilles de temps, en orange tant qu'elle n'est pas validée).
-        Seules les heures validées comptent dans la marge du chantier.</p>
+      <p><strong>Où tombent les heures :</strong> sur les <strong>comptes de chaque chantier</strong> dans
+        InterFast (feuilles de temps → marge réelle), une fois le RHI validé. Le planning InterFast n'est
+        que la porte d'entrée : InterFast n'accepte pas d'heures autrement. Une case par CH et par jour,
+        avec toute l'équipe ; dans InterFast, on la <strong>termine</strong> en recopiant les heures de
+        chacun (début, fin, pause), puis on <strong>valide la feuille de temps</strong> (Équipe → la fiche →
+        Feuilles de temps, en orange tant qu'elle n'est pas validée). Seules les heures validées
+        comptent dans la marge du chantier.</p>
       <p>${d.ecriture ? '' : d.essai.length
         ? `<span class="pastille p-ambre">Mode essai : seule l'affaire ${esc(d.essai.join(', '))} peut partir vers InterFast.</span>
            Les autres cases montrent ce qui partirait, sans rien envoyer.`
@@ -624,52 +585,6 @@ async function ongletEnvois() {
       afficher();
     } catch (e) { retour.textContent = e.message; }
   });
-}
-
-// ── Marche en avant : chaque pose à venir face à ses études et sa fab ──
-async function ongletMarche() {
-  const [d, co] = await Promise.all([api('/api/marche'), api('/api/marche/courrier')]);
-  const cl = {rouge: 'p-rouge', orange: 'p-ambre', gris: '', vert: 'p-vert'};
-  const titre = {rouge: 'Risques prioritaires', orange: 'À surveiller', gris: 'À confirmer ou nettoyer', vert: 'Cohérent'};
-  const date = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
-  const blocs = ['rouge', 'orange', 'gris', 'vert'].map((n) => {
-    const ls = d.lignes.filter((l) => l.niveau === n);
-    if (!ls.length) return '';
-    return `<h2>${esc(titre[n])} · ${esc(ls.length)}</h2>` + ls.map((l) => `
-      <div class="carte">
-        <span class="pastille ${esc(cl[n])}">pose ${esc(date(l.pose))} · J${l.dans_j >= 0 ? '+' : ''}${esc(l.dans_j)}</span>
-        <strong>${esc(l.libelle)}</strong> <span class="ch">${esc(l.ch || 'sans CH')}</span>
-        <span class="doux">· ${esc(l.personnes.join(', '))}</span>
-        <ul>${l.constats.map((x) => `<li>${esc(x.texte)}${x.consecutifs > 1
-          ? ` <span class="pastille p-ambre">${esc(x.consecutifs)}ᵉ analyse d'affilée</span>` : ''}</li>`).join('')}</ul>
-      </div>`).join('');
-  }).join('');
-  $('#vue').innerHTML = `
-    <div class="carte">
-      <p>Poses du ${esc(date(d.jour))} au ${esc(date(d.jusqu_au))}, face au plan de charge, au planning FAB et au BET.
-        Une fabrication n'est comptée <strong>faite</strong> que si elle est datée d'avant aujourd'hui.</p>
-      <p>${d.bet_charge ? `BET chargé, planifié jusqu'au ${esc(date(d.bet_a_jour_au || d.jour))}.`
-        : '<span class="pastille p-ambre">BET non chargé : déposer le planning BET (onglet Plannings) pour les alertes « études ».</span>'}</p>
-      <p><a class="btn" href="/api/marche.md" id="synthese">⬇ La synthèse en Markdown (à envoyer)</a></p>
-      <p>${!co.smtp ? '<span class="doux">L\'envoi automatique du lundi n\'est pas branché : la synthèse se télécharge ci-dessus, à transférer par mail.</span>'
-        : !co.a.length ? '<span class="pastille p-ambre">Envoi du lundi 7 h : aucun destinataire (RHI_MARCHE_A)</span>'
-        : `Envoyée chaque lundi à 7 h à ${esc(co.a.join(', '))}. <button id="envoyer-marche">✉ Envoyer maintenant</button>`}
-        ${co.dernier ? `<span class="doux">Dernier envoi : ${esc(co.dernier.jour)} — ${esc(co.dernier.statut)}</span>` : ''}</p>
-    </div>` + (blocs || '<div class="rien">Aucune pose dans les 4 semaines : déposer le planning de pose.</div>');
-  if ($('#envoyer-marche')) $('#envoyer-marche').onclick = async () => {
-    try { const r = await api('/api/marche/envoyer', {method: 'POST'}); dire('Synthèse : ' + r.statut); afficher(); }
-    catch (e) { dire(e.message); }
-  };
-  $('#synthese').onclick = async (e) => {
-    e.preventDefault();
-    try {
-      const texte = await api('/api/marche.md');
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([texte], {type: 'text/markdown'}));
-      a.download = 'marche-en-avant-' + d.jour + '.md';
-      a.click();
-    } catch (err) { dire(err.message); }
-  };
 }
 
 afficher();

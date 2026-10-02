@@ -36,7 +36,8 @@ COURRIER = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "MAIL_FROM")
 ATTENDUES = ("RHI_CODE_TERRAIN", "RHI_CODE_BUREAU", "RHI_MARCHE_A",
              "SMTP_HOST", "SMTP_USER", "SMTP_PASS", "INTERFAST_VIP")
 FACULTATIVES = ("SMTP_PORT", "MAIL_FROM", "RHI_CH_DIVERS", "RHI_CH_FRAIS_GENERAUX",
-                "RHI_COUT_HORAIRE", "RHI_ENTREPRISE", "RHI_DONNEES", "RHI_PRODUCTION")
+                "RHI_COUT_HORAIRE", "RHI_ENTREPRISE", "RHI_DONNEES", "RHI_PRODUCTION",
+                "RHI_PLANNINGS_URL", "RHI_PLANNINGS_MINUTES", "RHI_HEURES_JOUR")
 # Ce que Clever lit pour lancer RHI (docs/deploiement.md, § 3). Pas des secrets.
 LANCEMENT = {"CC_RUN_COMMAND": "uvicorn app:app --host 0.0.0.0 --port 9000", "CC_PYTHON_VERSION": "3.12"}
 # Tout ce que RHI lit : le reste, sur RHI, ne sert à rien — et une clé qui ne

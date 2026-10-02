@@ -53,13 +53,18 @@ verif("url.pathname === '/'" in sw, "sw.js : hors ligne, seule la tablette retom
 
 # Le mode d'emploi ne promet que des gestes qui existent (règle d'Ali Baba).
 guide = (PUB / "mode-emploi.html").read_text()
-for onglet in ("Plannings", "À vérifier", "RHI de la semaine", "Marche en avant", "Point d'affaire",
-               "Vers InterFast"):
+for onglet in ("Déposer les plannings", "Mes chantiers", "À vérifier", "RHI de la semaine",
+               "Vers InterFast", "Personnes", "Qui pointe maintenant"):
     verif(onglet in guide and f">{onglet}<" in (PUB / "bureau.html").read_text(),
           f"mode d'emploi : l'onglet « {onglet} » existe au bureau")
 for geste in ("J'arrête", "Valider la semaine", "Télécharger toute la base", "Hors affaire"):
     verif(geste in guide and any(geste in (PUB / f).read_text() for f in ("terrain.js", "bureau.js")),
           f"mode d'emploi : « {geste} » existe à l'écran")
+# Retirés à la revue du 01/10/2026 (le point d'affaire vit dans InterFast, la
+# marche en avant chez un agent à part) : le guide ne doit plus les promettre.
+for parti in ("Point d'affaire", "Marche en avant"):
+    verif(parti not in guide and f">{parti}<" not in (PUB / "bureau.html").read_text(),
+          f"« {parti} » a quitté le bureau : ni onglet, ni promesse dans le guide")
 verif("Rien n'y est envoyé" in guide, "le guide dit que l'envoi vers InterFast n'est pas branché")
 for src in re.findall(r'src="([^"#:]+)"', guide):
     verif((PUB / src).exists(), f"mode d'emploi : la capture {src} est absente du disque")

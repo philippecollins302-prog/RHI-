@@ -8,9 +8,11 @@ Deux fichiers comptent pour le pointage :
 
 On n'en tire que ce qu'il faut pour pointer : qui est prévu sur quel CH tel
 jour (pour proposer « mes chantiers du jour » en tête de liste) et les heures
-prévues par CH (pour le point d'affaire). Les couleurs d'Alexis ne sont PAS
-lues : elles portent la BU et l'état d'appro, pas le pointage.
+prévues par CH. Les couleurs d'Alexis sont gardées telles quelles, case par
+case : elles portent la BU et l'état d'appro (« le matos n'est pas arrivé »),
+que les gars savent lire — l'écran du mur les rend (revue du 01/10/2026).
 """
+import colorsys
 import datetime as dt
 import re
 
@@ -27,6 +29,59 @@ ABSENCES = {"CP", "AM", "FERIE", "FÉRIÉ", "RECUP", "RÉCUP", "MALADIE", "RTT",
 MOIS = {"JANVIER": 1, "FEVRIER": 2, "MARS": 3, "AVRIL": 4, "MAI": 5, "JUIN": 6,
         "JUILLET": 7, "AOUT": 8, "SEPTEMBRE": 9, "OCTOBRE": 10, "NOVEMBRE": 11,
         "DECEMBRE": 12}
+
+
+# L'ordre des couleurs d'un thème Office, tel que les cellules les numérotent.
+ORDRE_THEME = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4",
+               "accent5", "accent6", "hlink", "folHlink")
+
+
+def couleurs_theme(classeur) -> list:
+    """Les douze couleurs du thème du classeur (« #RRGGBB »), ou []."""
+    xml = getattr(classeur, "loaded_theme", None)
+    if not xml:
+        return []
+    xml = xml.decode("utf-8", "replace") if isinstance(xml, bytes) else str(xml)
+    trouve = {}
+    for nom in ORDRE_THEME:
+        m = re.search(rf"<a:{nom}>\s*<a:(?:srgbClr val|sysClr[^>]*lastClr)=\"([0-9A-Fa-f]{{6}})\"", xml)
+        if m:
+            trouve[nom] = m.group(1).upper()
+    return [trouve.get(n) for n in ORDRE_THEME]
+
+
+def _teinte(rgb: str, tint: float) -> str:
+    """La nuance « plus clair / plus foncé » qu'Excel applique à une couleur de thème."""
+    r, g, b = (int(rgb[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    l = l * (1 + tint) if tint < 0 else l * (1 - tint) + tint
+    return "".join(f"{round(x * 255):02X}" for x in colorsys.hls_to_rgb(h, l, s))
+
+
+def couleur(cellule, theme=()) -> str | None:
+    """Le fond d'une case, « #RRGGBB », ou None (pas de fond, ou blanc).
+
+    Trois façons d'écrire une couleur dans un .xlsx : en clair (rgb), par le
+    numéro d'une palette ancienne (indexed), ou par le thème plus une nuance
+    (theme + tint) — celle des boutons de couleur d'Excel, la plus courante."""
+    f = cellule.fill
+    if f is None or f.fill_type != "solid":
+        return None
+    c = f.fgColor
+    rgb = None
+    try:
+        if c.type == "rgb" and isinstance(c.rgb, str) and len(c.rgb) == 8:
+            rgb = c.rgb[2:].upper()
+        elif c.type == "indexed" and c.indexed is not None:
+            from openpyxl.styles.colors import COLOR_INDEX
+            if 0 <= c.indexed < len(COLOR_INDEX):
+                rgb = COLOR_INDEX[c.indexed][2:].upper()
+        elif c.type == "theme" and c.theme is not None and c.theme < len(theme) and theme[c.theme]:
+            rgb = _teinte(theme[c.theme], float(c.tint or 0))
+    except (TypeError, ValueError):
+        return None
+    # Le blanc ne dit rien : c'est le fond de toutes les cases sans couleur.
+    return None if not rgb or rgb == "FFFFFF" else "#" + rgb
 
 
 class FichierInattendu(ValueError):
@@ -169,6 +224,7 @@ def lire_atelier(classeur) -> dict:
                 continue
             bandes[grille.plage_verticale(r, c)] = nom
 
+    theme = couleurs_theme(classeur)
     affectations = []
     for (r0, r1), nom in sorted(bandes.items()):
         for c, jour in dates.items():
@@ -185,8 +241,9 @@ def lire_atelier(classeur) -> dict:
             if libelle and normaliser(libelle) in ABSENCES:
                 continue
             if codes or libelle:
-                affectations.append({"personne": nom, "jour": jour,
-                                     "codes": codes, "libelle": libelle or ""})
+                teinte = couleur(fab.cell(*grille.origine.get((r0, c), (r0, c))), theme)
+                affectations.append({"personne": nom, "jour": jour, "codes": codes,
+                                     "libelle": libelle or "", "couleur": teinte, "equipe": nom})
 
     return {"personnes": sorted(set(bandes.values())),
             "affectations": affectations,
@@ -297,6 +354,7 @@ def personnes_equipe(libelle) -> list:
 def lire_pose(classeur) -> dict:
     """Équipes de pose, leurs membres, et l'affectation jour par jour."""
     personnes, affectations = set(), []
+    theme = couleurs_theme(classeur)
     for nom_onglet in classeur.sheetnames:
         mots = normaliser(nom_onglet).split()
         if len(mots) != 2 or mots[0] not in MOIS or not mots[1].isdigit():
@@ -331,9 +389,11 @@ def lire_pose(classeur) -> dict:
                     continue
                 codes = codes_ch(grille.valeur(r_ch, c)) if r_ch else []
                 codes += [x for x in codes_ch(v) if x not in codes]
+                teinte = couleur(ws.cell(*grille.origine.get((r, c), (r, c))), theme)
                 for m in membres:
                     affectations.append({"personne": m, "jour": jour, "codes": codes,
-                                         "libelle": " / ".join(lignes(v))})
+                                         "libelle": " / ".join(lignes(v)), "couleur": teinte,
+                                         "equipe": " & ".join(membres)})
     return {"personnes": sorted(personnes), "affectations": affectations}
 
 
@@ -476,6 +536,7 @@ def lire_pose_men(classeur) -> dict:
     « L5 », « M6 » en ligne 3, une bande par équipe (« PATOU /JEROME ») avec
     ses lignes « N° AFFAIRE » et « CA »."""
     personnes, affectations = set(), []
+    theme = couleurs_theme(classeur)
     for nom_onglet in classeur.sheetnames:
         if not re.fullmatch(r"20\d\d", nom_onglet.strip()):
             continue

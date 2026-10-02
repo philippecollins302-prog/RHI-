@@ -18,6 +18,9 @@ async function relire() {
   }
 }
 
+// Revue du 01/10/2026 : « je ne veux pas ce qu'ils sont en train de faire,
+// je veux le planning de la semaine, comme on les a habitués » — une ligne
+// par poste (par équipe en pose), une colonne par jour, la couleur de l'Excel.
 const VUES = [vueAtelier, vuePose, vueTraitement];
 
 function dessiner() {
@@ -37,30 +40,44 @@ function vueTraitement() {
     </div>`).join('')}</div>`;
 }
 
-function vueAtelier() {
-  $('#titre').textContent = 'Atelier · aujourd\'hui';
-  const maintenant = Date.now() + ecartMs;
-  $('#vue').innerHTML = `<div class="mur">${donnees.atelier.map((p) => {
-    const t = p.en_cours;
-    return `<div class="poste ${t ? 'actif' : ''}">
-      <div class="qui">${esc(p.nom)}</div>
-      ${t ? `<div class="live">⏱ ${esc(t.ch || t.motif)} ${esc(t.chantier)} · ${esc(duree((maintenant - msDeParis(t.debut)) / 1000).slice(0, -3))}</div>` : ''}
-      <div class="prevu">${p.prevu.length ? p.prevu.map((x) => esc(x.libelle)).join('<br>') : 'Rien au planning'}</div>
-    </div>`;
-  }).join('')}</div>`;
+// Un fond foncé appelle un texte blanc : la couleur vient de l'Excel, on ne la choisit pas.
+function encre(fond) {
+  if (!/^#[0-9A-F]{6}$/i.test(fond || '')) return '';
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(fond.slice(i, i + 2), 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 140 ? '#fff' : '#1a1a1a';
 }
 
-function vuePose() {
-  $('#titre').textContent = 'Pose · cette semaine';
-  $('#vue').innerHTML = `<div class="jours">${donnees.pose.map((j, i) => `
-    <div class="jour ${j.jour === donnees.jour ? 'aujourdhui' : ''}">
-      <h2>${esc(JOURS_ECRAN[i])} ${esc(j.jour.slice(8, 10))}/${esc(j.jour.slice(5, 7))}</h2>
-      ${j.equipes.length ? j.equipes.map((e) => `<div class="equipe">
-        <div class="qui">${esc(e.personnes.join(' · '))}</div>
-        <div>${esc(e.libelle)}</div><div class="ch">${esc(e.ch.join(' '))}</div></div>`).join('')
-        : '<div class="doux">—</div>'}
-    </div>`).join('')}</div>`;
+function caseSemaine(x) {
+  const fond = /^#[0-9A-F]{6}$/i.test(x.couleur || '') ? x.couleur : '';
+  const morceaux = x.libelle.split(' / ');
+  const nom = x.chantier || morceaux[0] || x.libelle;
+  // Le libellé de l'Excel commence souvent par le nom du chantier : pas deux fois.
+  const pareil = (a, b) => a.trim().toUpperCase() === b.trim().toUpperCase();
+  const detail = (pareil(morceaux[0], nom) ? morceaux.slice(1) : morceaux).join(' · ');
+  return `<div class="tache" style="${fond ? `background:${esc(fond)};color:${esc(encre(fond))}` : ''}">
+    <div class="nom">${esc(nom)}</div>
+    ${detail ? `<div class="detail">${esc(detail)}</div>` : ''}
+    <div class="ref">${esc([x.ch, x.conduc].filter(Boolean).join(' · '))}</div></div>`;
 }
+
+function grilleSemaine(titre, bandes) {
+  const sem = donnees.semaine;
+  $('#titre').textContent = titre;
+  const maintenant = Date.now() + ecartMs;
+  $('#vue').innerHTML = bandes.length ? `<table class="semaine">
+    <tr><th></th>${sem.jours.map((j, i) => `<th class="${j === donnees.jour ? 'aujourdhui' : ''}">
+      ${esc(JOURS_ECRAN[i])} ${esc(j.slice(8, 10))}/${esc(j.slice(5, 7))}</th>`).join('')}</tr>
+    ${bandes.map((b) => `<tr>
+      <th class="qui">${esc(b.nom)}${b.en_cours ? `<div class="live">⏱ ${esc(b.en_cours.ch || b.en_cours.motif)}
+        · ${esc(duree((maintenant - msDeParis(b.en_cours.debut)) / 1000).slice(0, -3))}</div>` : ''}</th>
+      ${b.cases.map((cs, i) => `<td class="${sem.jours[i] === donnees.jour ? 'aujourdhui' : ''}">
+        ${cs.map(caseSemaine).join('')}</td>`).join('')}
+    </tr>`).join('')}
+  </table>` : '<div class="rien">Pas de planning cette semaine : le bureau dépose le planning.</div>';
+}
+
+function vueAtelier() { grilleSemaine('Atelier · la semaine', donnees.semaine.atelier); }
+function vuePose() { grilleSemaine('Pose · la semaine', donnees.semaine.pose); }
 
 function horloge() {
   $('#horloge').textContent = isoParis(Date.now() + ecartMs).slice(11, 16);
