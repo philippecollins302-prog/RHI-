@@ -31,6 +31,17 @@ a = sys.argv[1:]
 apps = json.load(open({str(etat_apps)!r}))
 env_vus = {{k: os.environ[k] for k in {list(SECRETS)!r} if k in os.environ}}
 open({str(journal)!r}, "a").write(json.dumps({{"argv": a, "env": env_vus}}) + "\\n")
+if a[0] == "curl":
+    url = a[-1]
+    if "-X" in a:
+        membres = apps.setdefault("membres", [])
+        corps = json.loads(a[a.index("-d") + 1])
+        membres.append({{"member": {{"email": corps["email"]}}, "role": corps["role"]}})
+        json.dump(apps, open({str(etat_apps)!r}, "w"))
+        print("{{}}")
+    else:
+        print(json.dumps(apps.get("membres", [])))
+    sys.exit(0)
 app = a[a.index("--app") + 1]
 seaux = {{{ALIBABA!r}: "seau-alibaba.fr", {RHI!r}: "seau-rhi.fr"}}
 if a[0] == "env" and len(a) > 1 and a[1] == "rm":
@@ -56,13 +67,18 @@ else:
 faux.chmod(0o755)
 
 
-def lancer(geste, apps, github=False):
+def lancer(geste, apps, github=False, invite=None, role=None):
     etat_apps.write_text(json.dumps(apps))
     journal.write_text("")
     env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_ACTIONS", "GITHUB_STEP_SUMMARY")}
     env.update(CLEVER=str(faux), ALIBABA=ALIBABA)
     if github:
         env.update(GITHUB_ACTIONS="true", GITHUB_STEP_SUMMARY=str(tmp / "resume.md"))
+    env.pop("RHI_INVITE", None), env.pop("RHI_ROLE", None)
+    if invite is not None:
+        env["RHI_INVITE"] = invite
+    if role is not None:
+        env["RHI_ROLE"] = role
     r = subprocess.run([sys.executable, str(RACINE / "outils/telecommande.py"), geste],
                        capture_output=True, text=True, env=env)
     appels = [json.loads(l) for l in journal.read_text().splitlines()]
@@ -152,6 +168,33 @@ verif("identiques" in r.stdout and "piege-meme" not in r.stdout, f"codes identiq
 bons = {ALIBABA: {}, RHI: {"RHI_CODE_TERRAIN": "piege-t", "RHI_CODE_BUREAU": "piege-bureau-long"}}
 r, _, _ = lancer("etat", bons)
 verif("codes d'accès" not in r.stdout, "des codes corrects : rien à redire")
+
+# ── Inviter quelqu'un dans l'organisation (02/11/2026) ──
+ORGA = [l.split("=", 1)[1].split()[0] for l in (RACINE / "outils/clever.conf").read_text().splitlines()
+        if l.startswith("ORGA=")][0]
+r, appels, apres = lancer("inviter", {ALIBABA: {}, RHI: {}}, github=True, invite="Dsi.Piege@Exemple.fr")
+post = [a for a in appels if a["argv"][0] == "curl" and "-X" in a["argv"]]
+verif(r.returncode == 0 and len(post) == 1 and post[0]["argv"][-1].endswith(f"/organisations/{ORGA}/members"),
+      f"inviter : un seul POST, sur l'organisation de RHI : {r.stdout}{r.stderr}")
+verif(apres["membres"] == [{"member": {"email": "dsi.piege@exemple.fr"}, "role": "DEVELOPER"}],
+      "l'adresse est envoyée en minuscules, avec le rôle DEVELOPER par défaut")
+verif("::add-mask::dsi.piege@exemple.fr" in r.stdout
+      and "dsi.piege@exemple.fr" not in r.stdout.replace("::add-mask::dsi.piege@exemple.fr", ""),
+      "l'adresse est masquée dans le journal public, et jamais écrite en clair")
+verif(not any(a["argv"][0] == "env" or a["argv"][0] == "restart" for a in appels),
+      "inviter ne touche ni aux variables ni au redémarrage")
+r, appels, _ = lancer("inviter", apres, invite="dsi.piege@exemple.fr")
+verif("déjà membre" in r.stdout and not any("-X" in a["argv"] for a in appels),
+      "déjà membre : pas de seconde invitation (Clever en renverrait une à chaque appel)")
+r, appels, _ = lancer("inviter", {ALIBABA: {}, RHI: {}}, invite="pas-une-adresse")
+verif(r.returncode != 0 and not appels, "adresse invalide : refusée avant tout appel")
+r, appels, _ = lancer("inviter", {ALIBABA: {}, RHI: {}}, invite="dsi@exemple.fr", role="ROI")
+verif(r.returncode != 0 and not appels, "rôle inconnu : refusé avant tout appel")
+r, _, apres = lancer("inviter", {ALIBABA: {}, RHI: {}}, invite="dsi@exemple.fr", role="admin")
+verif(apres["membres"][0]["role"] == "ADMIN", "le rôle choisi au bouton est respecté")
+wf_inv = (RACINE / ".github/workflows/telecommande.yml").read_text()
+verif("RHI_INVITE: ${{ inputs.email }}" in wf_inv and 'run: python3 outils/telecommande.py "$GESTE"' in wf_inv,
+      "le champ libre du bouton passe par l'environnement, jamais interpolé dans le shell")
 
 r, _, _ = lancer("detruire", apps)
 verif(r.returncode != 0, "geste inconnu : refusé")
