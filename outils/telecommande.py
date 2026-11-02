@@ -21,6 +21,9 @@ Gestes :
              le réglage d'Ali Baba y avait été collé : sa clé Anthropic, ses
              clés InterFast des autres sociétés…) et remet en place la commande
              de lancement et le bucket de RHI s'ils ne sont plus les siens
+  inviter    invite l'adresse de RHI_INVITE dans l'organisation GROUP ALMA, avec
+             le rôle de RHI_ROLE (DEVELOPER par défaut). Clever envoie lui-même
+             le mail d'invitation ; quelqu'un déjà membre n'est pas réinvité.
 """
 import json
 import os
@@ -178,6 +181,33 @@ def nettoyer(rhi: str):
         dire("Rien à nettoyer.")
 
 
+ROLES = ("DEVELOPER", "MANAGER", "ADMIN", "ACCOUNTING")
+API = "https://api.clever-cloud.com/v2"
+
+
+def inviter(rhi: str):
+    """Une invitation dans l'organisation, par l'API signée de clever (`clever
+    curl`) : l'outil n'a pas de commande pour ça. Née le 02/11/2026 pour la DSI,
+    qui arrivait sur RHI sans accès à la console. L'adresse vient de
+    l'environnement et est masquée : le journal de ce dépôt public ne la dit pas."""
+    email = os.environ.get("RHI_INVITE", "").strip().lower()
+    role = (os.environ.get("RHI_ROLE") or "DEVELOPER").strip().upper()
+    if not re.fullmatch(r"[^@\s\"']+@[^@\s\"']+\.[a-z]{2,}", email):
+        raise SystemExit("❌ adresse à inviter absente ou invalide (champ « email » du bouton)")
+    if role not in ROLES:
+        raise SystemExit(f"❌ rôle inconnu : {role} ({', '.join(ROLES)})")
+    masquer(email)
+    orga = conf()["ORGA"]
+    membres = json.loads(clever("curl", f"{API}/organisations/{orga}/members") or "[]")
+    if any((m.get("member") or {}).get("email", "").lower() == email for m in membres):
+        dire("✅ cette adresse est déjà membre de l'organisation : rien à faire.")
+        return
+    clever("curl", "-X", "POST", "-H", "Content-Type: application/json",
+           "-d", json.dumps({"email": email, "role": role, "job": ""}),
+           f"{API}/organisations/{orga}/members")
+    dire(f"📨 invitation envoyée par Clever (rôle {role}) : elle se valide depuis le mail reçu.")
+
+
 def redemarrer(rhi: str):
     clever("restart", "--app", rhi, "--quiet")
     dire("🔄 RHI redémarre : les variables s'appliquent au redémarrage (une à deux minutes).")
@@ -185,10 +215,11 @@ def redemarrer(rhi: str):
 
 if __name__ == "__main__":
     geste = sys.argv[1] if len(sys.argv) > 1 else "etat"
-    gestes = {"etat": etat, "courrier": courrier, "redemarrer": redemarrer, "nettoyer": nettoyer}
+    gestes = {"etat": etat, "courrier": courrier, "redemarrer": redemarrer, "nettoyer": nettoyer,
+              "inviter": inviter}
     if geste not in gestes:
         raise SystemExit(f"geste inconnu : {geste} ({', '.join(gestes)})")
     rhi = conf()["APP_VIP"]
     gestes[geste](rhi)
-    if geste != "etat":
+    if geste not in ("etat", "inviter"):
         etat(rhi)

@@ -11,11 +11,21 @@ on:
   workflow_dispatch:
     inputs:
       geste:
-        description: "etat · courrier (recopie SMTP d'Ali Baba) · nettoyer · redemarrer"
+        description: "etat · courrier (recopie SMTP d'Ali Baba) · nettoyer · redemarrer · inviter"
         required: true
         default: etat
         type: choice
-        options: [etat, courrier, nettoyer, redemarrer]
+        options: [etat, courrier, nettoyer, redemarrer, inviter]
+      email:
+        description: "inviter seulement : l'adresse à inviter dans l'organisation GROUP ALMA"
+        required: false
+        default: ""
+      role:
+        description: "inviter seulement : le rôle Clever"
+        required: false
+        default: DEVELOPER
+        type: choice
+        options: [DEVELOPER, MANAGER, ADMIN, ACCOUNTING]
 
 permissions:
   contents: read
@@ -38,4 +48,10 @@ jobs:
           node-version: "24"
       - run: npm install -g clever-tools@5
       - name: ${{ inputs.geste }}
-        run: python3 outils/telecommande.py "${{ inputs.geste }}"
+        # L'adresse passe par l'environnement, jamais dans la ligne de shell :
+        # un champ libre interpolé dans `run:` serait du code.
+        env:
+          GESTE: ${{ inputs.geste }}
+          RHI_INVITE: ${{ inputs.email }}
+          RHI_ROLE: ${{ inputs.role }}
+        run: python3 outils/telecommande.py "$GESTE"
