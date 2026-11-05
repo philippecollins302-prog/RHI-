@@ -396,6 +396,48 @@ async def devis_de(ch: str, transport=None) -> dict:
             "refs": [d["ref"] for d in vendus]}
 
 
+async def terminer_intervention(ch: str, num, transport=None) -> None:
+    """Termine une intervention dans InterFast, comme le bouton « Terminer »
+    de l'application. Relevé le 05/11/2026 (sonde sur une intervention de
+    test, clé API) : PUT /v1/intervention/{id}/finished, corps vide, 200 ;
+    un second appel répond 200 sans rien changer. Après : finished=true,
+    lifecycleState "completed", et les timesheets rendent, pour CHAQUE
+    technicien, le créneau planifié de la case — d'où une case par groupe
+    d'heures identiques.
+
+    Jamais sans id certain, jamais hors de l'écriture permise. La clôture
+    n'est tenue pour faite que relue : GET /v1/intervention/{id} doit dire
+    finished=true. Sinon InterFastIndisponible, et la case reste posée."""
+    quoi = f"{ch} id {num}"
+    if not ecriture_permise(ch):
+        raise EcritureCoupee(f"Écriture InterFast coupée pour {ch} : clôture refusée (docs/interfast.md).")
+    if not isinstance(num, int) or isinstance(num, bool) or num <= 0:
+        raise InterFastIndisponible(f"Clôture refusée : id InterFast inconnu ({num!r}), jamais de clôture sans id certain")
+    k = cle()
+    if not k:
+        raise InterFastIndisponible(f"Clé {CLES[entreprise()]} absente de l'environnement")
+    entete = {"X-API-KEY": k, "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=REST_DELAI, transport=transport) as h:
+        try:
+            r = await h.put(f"{REST_URL}/intervention/{num}/finished", content=b"",
+                            headers=entete | {"Content-Type": "application/json"})
+        except httpx.HTTPError as e:
+            journal.warning("terminer %s : sans réponse (%s)", quoi, type(e).__name__)
+            raise InterFastIndisponible(f"Clôture sans réponse ({type(e).__name__}) : la case reste posée") from e
+        if r.status_code != 200:
+            journal.warning("terminer %s : refus HTTP %s", quoi, r.status_code)
+            raise InterFastIndisponible(f"Clôture refusée par InterFast (HTTP {r.status_code}) : la case reste posée")
+        try:
+            lu = await h.get(f"{REST_URL}/intervention/{num}", params={"withFollowUp": "false"}, headers=entete)
+            fini = lu.status_code == 200 and lu.json().get("finished") is True
+        except (httpx.HTTPError, ValueError, AttributeError):
+            fini = False
+    if not fini:
+        journal.warning("terminer %s : PUT accepté, mais pas relue terminée", quoi)
+        raise InterFastIndisponible("Clôture envoyée, mais InterFast ne la dit pas terminée : la case reste posée")
+    journal.info("terminer %s : terminée", quoi)
+
+
 class EcritureCoupee(InterFastIndisponible):
     """ECRITURE = False : rien ne part, et on le dit."""
 
@@ -442,9 +484,9 @@ class Posee(str):
     sont PAS uniques (05/11/2026 : IN00410 est notre case CH00066 du 27/10 ET
     une visite de 2022 dans un lycée) : l'id, lui, l'est."""
 
-    def __new__(cls, ref, num=None):
+    def __new__(cls, ref, num=None, terminee=False):
         o = super().__new__(cls, ref)
-        o.num = num
+        o.num, o.terminee = num, terminee
         return o
 
 
@@ -472,7 +514,8 @@ def _evenement(it) -> dict:
     w = it.get("worksite")
     chantier = w.get("id") if isinstance(w, dict) else it.get("worksiteId")
     return {"id": int(it["id"]), "titre": (it.get("title") or "").strip(), "ref": _ref_normale(it.get("reference")),
-            "jour": _jour_paris(str(it["start"])), "chantier": int(chantier) if chantier else None}
+            "jour": _jour_paris(str(it["start"])), "chantier": int(chantier) if chantier else None,
+            "termine": it.get("finished") is True}
 
 
 EVENTS_PAGE = 50        # événements par page
@@ -662,8 +705,9 @@ async def poser_case(case: dict, transport=None) -> Posee:
                            "supprimer les doublons dans InterFast, puis indiquer la référence gardée")
         if not refs[0].startswith("IN"):
             raise InterFastIndisponible(f"Case déjà dans InterFast ({refs[0]}), référence illisible : rien n'est créé")
-        journal.info("planifier %s : case existante reprise, référence %s, id %s", quoi, refs[0], existantes[0]["id"])
-        return Posee(refs[0], existantes[0]["id"])
+        journal.info("planifier %s : case existante reprise, référence %s, id %s%s", quoi, refs[0],
+                     existantes[0]["id"], ", déjà terminée" if existantes[0].get("termine") else "")
+        return Posee(refs[0], existantes[0]["id"], terminee=bool(existantes[0].get("termine")))
     try:
         recap = await outil("planifier_intervention", args, transport)
     except InterFastIndisponible as e:

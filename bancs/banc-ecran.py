@@ -58,7 +58,8 @@ for onglet in ("Déposer les plannings", "Mes chantiers", "À vérifier", "RHI d
     verif(onglet in guide and f">{onglet}<" in (PUB / "bureau.html").read_text(),
           f"mode d'emploi : l'onglet « {onglet} » existe au bureau")
 for geste in ("J'arrête", "Valider la semaine", "Télécharger toute la base", "Hors affaire",
-              "À rattacher", "Relire Silae", "Rattacher", "Ne pointe pas", "Importer les alias"):
+              "À rattacher", "Relire Silae", "Rattacher", "Ne pointe pas", "Importer les alias",
+              "Terminer dans InterFast"):
     verif(geste in guide and any(geste in (PUB / f).read_text() for f in ("terrain.js", "bureau.js")),
           f"mode d'emploi : « {geste} » existe à l'écran")
 # Retirés à la revue du 01/10/2026 (le point d'affaire vit dans InterFast, la

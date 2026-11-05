@@ -195,12 +195,16 @@ CREATE TABLE IF NOT EXISTS pointages (
 CREATE TABLE IF NOT EXISTS cases_interfast (
   ch TEXT NOT NULL,
   jour TEXT NOT NULL,
+  -- Le groupe d'heures identiques (décision de Serge, 05/11/2026) : le temps
+  -- travaillé de chacun, en minutes (« 480 »). Vide : une case posée avant
+  -- les groupes, avec toute l'équipe du jour dessus.
+  groupe TEXT NOT NULL DEFAULT '',
   ref TEXT NOT NULL,               -- IN00123, rendu par InterFast
   posee_le TEXT NOT NULL,
-  terminee INTEGER NOT NULL DEFAULT 0,   -- le ✅ du planning InterFast, relu
+  terminee INTEGER NOT NULL DEFAULT 0,   -- terminée dans InterFast (PUT /finished, ou relue)
   relue_le TEXT,
-  num INTEGER,                     -- id interne InterFast (1819630), trouvé à la relecture
-  PRIMARY KEY (ch, jour)
+  num INTEGER,                     -- id interne InterFast (2097424) : les références ne sont pas uniques
+  PRIMARY KEY (ch, jour, groupe)
 );
 CREATE TABLE IF NOT EXISTS depots_auto (
   source TEXT PRIMARY KEY,         -- « hôte · empreinte du lien » : jamais le lien (il porte un jeton)
@@ -277,6 +281,29 @@ def chemin_base() -> Path:
     return dossier / "rhi.db"
 
 
+def _cases_par_groupe(db) -> None:
+    """Une base d'avant les groupes (05/11/2026) : la clé de cases_interfast
+    passe de (ch, jour) à (ch, jour, groupe). SQLite ne change pas une clé en
+    place : la table est recopiée, en une transaction, et ses cases posées
+    gardent tout avec un groupe vide (« toute l'équipe du jour »)."""
+    if "groupe" in {r[1] for r in db.execute("PRAGMA table_info(cases_interfast)")}:
+        return
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if "groupe" not in {r[1] for r in db.execute("PRAGMA table_info(cases_interfast)")}:
+            cols = [r[1] for r in db.execute("PRAGMA table_info(cases_interfast)")]
+            db.execute("ALTER TABLE cases_interfast RENAME TO cases_interfast_avant_groupes")
+            db.execute(SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS cases_interfast ("):
+                              SCHEMA.index(");", SCHEMA.index("CREATE TABLE IF NOT EXISTS cases_interfast (")) + 2])
+            liste = ", ".join(cols)
+            db.execute(f"INSERT INTO cases_interfast({liste}) SELECT {liste} FROM cases_interfast_avant_groupes")
+            db.execute("DROP TABLE cases_interfast_avant_groupes")
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+
+
 def connexion(chemin=None) -> sqlite3.Connection:
     # FastAPI sert les routes async et sync sur des fils différents.
     db = sqlite3.connect(chemin or chemin_base(), check_same_thread=False)
@@ -291,6 +318,7 @@ def connexion(chemin=None) -> sqlite3.Connection:
     # base et par processus.
     cle = str(chemin or chemin_base())
     if cle not in _MIGREES:
+        _cases_par_groupe(db)
         for table, colonnes in AJOUTS.items():
             presentes = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
             for col, decl in colonnes:
@@ -1896,6 +1924,81 @@ def duree_texte(heures: float) -> str:
     return f"{m // 60}h{m % 60:02d}" if m % 60 else f"{m // 60}h"
 
 
+def initiales(nom: str) -> str:
+    """« Paul Martin » → « PM » ; « LUC » → « L »."""
+    return "".join(m[0] for m in nom.split() if m).upper()
+
+
+def _case_de_groupe(ch, jour, groupe, membres, nb_groupes, libelles, aff, gens, valides, pose, recues) -> dict:
+    """La case d'un groupe : ses techniciens, et SES heures. Heure de la case :
+    le premier début du groupe ce jour-là ; durée : le temps travaillé (les
+    pauses du midi exclues). L'heure de fin est donc théorique (8:00 + 8 h →
+    16:00) : le total et le coût, eux, sont justes (accepté par Serge)."""
+    equipe = []
+    for g in sorted(membres, key=lambda x: x["debut"]):
+        fiche = gens.get(g["personne"], {})
+        amplitude = (g["fin"] - g["debut"]).total_seconds() / 3600
+        equipe.append({
+            "personne": g["personne"], "technicien": fiche.get("nom_complet") or g["personne"],
+            "compte": bool(fiche.get("interfast_user_id")), "valide": g["personne"] in valides,
+            "debut": _hm(g["debut"]), "fin": _hm(g["fin"]), "heures": round(g["heures"], 2),
+            "pause": duree_texte(max(0.0, amplitude - g["heures"])) if amplitude - g["heures"] >= 1 / 60 else "",
+            "envoye": g["envoye"], "ids": g["ids"], "douteux": g["douteux"]})
+    debut = min(g["debut"] for g in membres)
+    if groupe:
+        minutes = int(groupe)
+        fin = debut + dt.timedelta(minutes=minutes)
+    else:   # avant les groupes : la case couvrait toute l'équipe
+        fin = max(g["fin"] for g in membres)
+        minutes = round((fin - debut).total_seconds() / 60)
+    blocages = []
+    if not aff.get("interfast_id"):
+        blocages.append("CH inconnu d'InterFast")
+    elif not aff.get("client"):
+        blocages.append("chantier sans client")
+    if not any(e["compte"] for e in equipe):
+        blocages.append("aucun technicien relié à InterFast")
+    douteux = [e["personne"] for e in equipe if e["douteux"]]
+    if douteux:
+        blocages.append(f"pointage de plus de {LONG_H} h ou sur deux jours ({', '.join(douteux)}) : à corriger")
+    attente = [e["personne"] for e in equipe if not e["valide"]]
+    # Ce qu'InterFast a reçu en clôture, face au RHI : un écart de plus
+    # d'un quart d'heure est une saisie à reprendre dans InterFast.
+    for e in equipe:
+        uid = gens.get(e["personne"], {}).get("interfast_user_id")
+        recu = recues.get((pose["ref"], uid)) if pose and uid else None
+        e["interfast"] = round(recu["minutes"] / 60, 2) if recu else None
+        e["ecart"] = bool(pose and pose["terminee"] and e["valide"] and e["compte"] and (
+            recu is None or abs(recu["minutes"] - e["heures"] * 60) > ECART_MIN))
+    a_ajouter = [e["technicien"] for e in equipe if e["valide"] and not e["envoye"]] if pose else []
+    if pose:
+        etat = ("à vérifier" if pose["ref"] == A_VERIFIER else "à compléter" if a_ajouter
+                else "terminée" if pose["terminee"] else "posée")
+        if etat == "terminée" and any(e["ecart"] for e in equipe):
+            etat = "écart"
+    elif attente:
+        etat = "en attente"
+    else:
+        etat = "bloquée" if blocages else "prête"
+    titre = " / ".join(libelles) or "pointage"
+    if nb_groupes > 1:
+        titre += " · " + " ".join(sorted(initiales(e["technicien"]) for e in equipe))
+    return {
+        "id": f"{ch}|{jour}|{groupe}", "ch": ch, "jour": jour, "groupe": groupe,
+        "heure": _hm(debut), "fin": _hm(fin), "duree": duree_texte(minutes / 60),
+        "heures": round(sum(e["heures"] for e in equipe), 2),
+        "equipe": equipe, "techniciens": [e["technicien"] for e in equipe if e["compte"]],
+        "sans_compte": [e["technicien"] for e in equipe if not e["compte"]],
+        "en_attente": attente, "a_ajouter": a_ajouter,
+        "client": aff.get("client", ""), "chantier": aff.get("titre") or aff.get("chantier", ""),
+        "chantier_id": aff.get("interfast_id"),
+        "description": f"RHI · {ch} · {titre}",
+        "ref": pose["ref"] if pose else "", "num": pose["num"] if pose else None, "etat": etat,
+        # « Terminer dans InterFast » : posée, pas terminée, et un id CERTAIN.
+        "a_terminer": bool(pose and etat == "posée" and pose["num"]),
+        "blocages": blocages}
+
+
 def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
     """Ce que RHI poserait dans le planning InterFast pour une semaine.
 
@@ -1920,7 +2023,7 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
         "SELECT personne FROM validations WHERE lundi=?", (lundi.isoformat(),))}
     gens = {r["nom"]: dict(r) for r in db.execute("SELECT * FROM personnes")}
     affaires = {r["ch"]: dict(r) for r in db.execute("SELECT * FROM affaires")}
-    posees = {(r["ch"], r["jour"]): dict(r) for r in db.execute(
+    posees = {(r["ch"], r["jour"], r["groupe"]): dict(r) for r in db.execute(
         "SELECT * FROM cases_interfast WHERE jour >= ? AND jour < ?", (lundi.isoformat(), fin_sem.isoformat()))}
     recues = {(r["ref"], r["user_id"]): dict(r) for r in db.execute("SELECT * FROM heures_interfast")}
     cases = {}
@@ -1937,7 +2040,8 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
         jour = p["debut"][:10]
         c = cases.setdefault((p["ch"], jour), {"ch": p["ch"], "jour": jour, "gens": {}, "libelles": []})
         g = c["gens"].setdefault(p["personne"], {"personne": p["personne"], "debut": None, "fin": None,
-                                                 "heures": 0.0, "ids": [], "envoye": True, "douteux": False})
+                                                 "heures": 0.0, "ids": [], "envoye": True, "douteux": False,
+                                                 "libelles": []})
         d, f = dt.datetime.fromisoformat(p["debut"]), dt.datetime.fromisoformat(p["fin"])
         # Un pointage à cheval sur deux jours ou de plus de 12 h est un arrêt
         # oublié ou mal rattrapé : il ne part pas tel quel dans une case.
@@ -1949,63 +2053,26 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
         g["envoye"] = g["envoye"] and bool(p["interfast"])
         if p["libelle"] and p["libelle"] not in c["libelles"]:
             c["libelles"].append(p["libelle"])
+        if p["libelle"] and p["libelle"] not in g["libelles"]:
+            g["libelles"].append(p["libelle"])
     sortie = []
     for (ch, jour), c in cases.items():
         aff = affaires.get(ch, {})
-        equipe = []
-        for g in sorted(c["gens"].values(), key=lambda x: x["debut"]):
-            fiche = gens.get(g["personne"], {})
-            amplitude = (g["fin"] - g["debut"]).total_seconds() / 3600
-            equipe.append({
-                "personne": g["personne"], "technicien": fiche.get("nom_complet") or g["personne"],
-                "compte": bool(fiche.get("interfast_user_id")), "valide": g["personne"] in valides,
-                "debut": _hm(g["debut"]), "fin": _hm(g["fin"]), "heures": round(g["heures"], 2),
-                "pause": duree_texte(max(0.0, amplitude - g["heures"])) if amplitude - g["heures"] >= 1 / 60 else "",
-                "envoye": g["envoye"], "ids": g["ids"], "douteux": g["douteux"]})
-        debut = min(dt.datetime.fromisoformat(f"{jour}T{e['debut']}") for e in equipe)
-        fin = max(dt.datetime.fromisoformat(f"{jour}T{e['fin']}") for e in equipe)
-        blocages = []
-        if not aff.get("interfast_id"):
-            blocages.append("CH inconnu d'InterFast")
-        elif not aff.get("client"):
-            blocages.append("chantier sans client")
-        if not any(e["compte"] for e in equipe):
-            blocages.append("aucun technicien relié à InterFast")
-        douteux = [e["personne"] for e in equipe if e["douteux"]]
-        if douteux:
-            blocages.append(f"pointage de plus de {LONG_H} h ou sur deux jours ({', '.join(douteux)}) : à corriger")
-        attente = [e["personne"] for e in equipe if not e["valide"]]
-        pose = posees.get((ch, jour))
-        # Ce qu'InterFast a reçu en clôture, face au RHI : un écart de plus
-        # d'un quart d'heure est une saisie à reprendre dans InterFast.
-        for e in equipe:
-            uid = gens.get(e["personne"], {}).get("interfast_user_id")
-            recu = recues.get((pose["ref"], uid)) if pose and uid else None
-            e["interfast"] = round(recu["minutes"] / 60, 2) if recu else None
-            e["ecart"] = bool(pose and pose["terminee"] and e["valide"] and e["compte"] and (
-                recu is None or abs(recu["minutes"] - e["heures"] * 60) > ECART_MIN))
-        a_ajouter = [e["technicien"] for e in equipe if e["valide"] and not e["envoye"]] if pose else []
-        if pose:
-            etat = ("à vérifier" if pose["ref"] == A_VERIFIER else "à compléter" if a_ajouter
-                    else "terminée" if pose["terminee"] else "posée")
-            if etat == "terminée" and any(e["ecart"] for e in equipe):
-                etat = "écart"
-        elif attente:
-            etat = "en attente"
-        else:
-            etat = "bloquée" if blocages else "prête"
-        sortie.append({
-            "id": f"{ch}|{jour}", "ch": ch, "jour": jour, "heure": _hm(debut), "fin": _hm(fin),
-            "duree": duree_texte((fin - debut).total_seconds() / 3600),
-            "heures": round(sum(e["heures"] for e in equipe), 2),
-            "equipe": equipe, "techniciens": [e["technicien"] for e in equipe if e["compte"]],
-            "sans_compte": [e["technicien"] for e in equipe if not e["compte"]],
-            "en_attente": attente, "a_ajouter": a_ajouter,
-            "client": aff.get("client", ""), "chantier": aff.get("titre") or aff.get("chantier", ""),
-            "chantier_id": aff.get("interfast_id"),
-            "description": f"RHI · {ch} · " + (" / ".join(c["libelles"]) or "pointage"),
-            "ref": pose["ref"] if pose else "", "etat": etat, "blocages": blocages})
-    sortie.sort(key=lambda x: (x["jour"], x["heure"], x["ch"]))
+        # Une case par groupe d'heures identiques (décision de Serge,
+        # 05/11/2026) : InterFast, à la clôture, donne à CHAQUE technicien le
+        # créneau planifié de la case ; seuls ceux qui ont le même temps
+        # peuvent donc partager une case. Une case posée avant les groupes
+        # (groupe vide) garde toute l'équipe du jour.
+        groupes = {}
+        for g in c["gens"].values():
+            cle_g = "" if (ch, jour, "") in posees else str(round(g["heures"] * 60))
+            groupes.setdefault(cle_g, []).append(g)
+        for groupe, membres in groupes.items():
+            # Les libellés du GROUPE (le motif de l'un n'est pas celui de l'autre).
+            libelles = list(dict.fromkeys(x for g in sorted(membres, key=lambda m: m["debut"]) for x in g["libelles"]))
+            sortie.append(_case_de_groupe(ch, jour, groupe, membres, len(groupes), libelles, aff, gens,
+                                          valides, posees.get((ch, jour, groupe)), recues))
+    sortie.sort(key=lambda x: (x["jour"], x["heure"], x["ch"], x["groupe"]))
     compte = lambda e: sum(1 for x in sortie if x["etat"] == e)  # noqa: E731
     return {"lundi": lundi.isoformat(), "cases": sortie, "personnes_validees": sorted(valides),
             "pretes": compte("prête"), "bloquees": compte("bloquée"), "en_attente": compte("en attente"),
@@ -2024,10 +2091,10 @@ def case_posee(db, case: dict, ref: str, num=None) -> None:
     suivent."""
     ids = [i for e in case["equipe"] if e["valide"] for i in e["ids"]]
     with db:
-        db.execute("""INSERT INTO cases_interfast(ch, jour, ref, posee_le, num) VALUES (?,?,?,?,?)
-                      ON CONFLICT(ch, jour) DO UPDATE SET ref=excluded.ref, posee_le=excluded.posee_le,
+        db.execute("""INSERT INTO cases_interfast(ch, jour, groupe, ref, posee_le, num) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(ch, jour, groupe) DO UPDATE SET ref=excluded.ref, posee_le=excluded.posee_le,
                         num=excluded.num""",
-                   (case["ch"], case["jour"], str(ref), _iso(maintenant()), num))
+                   (case["ch"], case["jour"], case.get("groupe", ""), str(ref), _iso(maintenant()), num))
         db.executemany("UPDATE pointages SET interfast=? WHERE id=?", [(ref, i) for i in ids])
 
 
@@ -2037,26 +2104,61 @@ ECART_MIN = 15
 A_VERIFIER = "À VÉRIFIER"
 
 
-def _case(db, ch: str, jour: str):
-    r = db.execute("SELECT * FROM cases_interfast WHERE ch=? AND jour=?", (ch, jour)).fetchone()
+def _case(db, ch: str, jour: str, groupe: str = ""):
+    r = db.execute("SELECT * FROM cases_interfast WHERE ch=? AND jour=? AND groupe=?", (ch, jour, groupe)).fetchone()
     if not r:
-        raise KeyError(f"{ch} le {jour} : aucune case posée")
+        raise KeyError(f"{ch} le {jour}{f' (groupe {groupe} min)' if groupe else ''} : aucune case posée")
     return dict(r)
 
 
-def completer_case(db, ch: str, jour: str) -> int:
+def case_terminee(db, ch: str, jour: str, groupe: str = "") -> None:
+    """InterFast a confirmé la clôture (finished=true, relu après le PUT)."""
+    with db:
+        db.execute("UPDATE cases_interfast SET terminee=1, relue_le=? WHERE ch=? AND jour=? AND groupe=?",
+                   (_iso(maintenant()), ch, jour, groupe))
+
+
+def a_terminer(db, ch: str, jour: str, groupe: str = "") -> dict:
+    """La case qu'on peut terminer dans InterFast : posée (IN…), pas encore
+    terminée, et dont l'id est CERTAIN — jamais de clôture sans lui."""
+    case = _case(db, ch, jour, groupe)
+    if not case["ref"].startswith("IN"):
+        raise ValueError(f"La case {ch} du {jour} n'est pas posée ({case['ref']})")
+    if case["terminee"]:
+        raise ValueError(f"La case {case['ref']} est déjà terminée dans InterFast")
+    if not case["num"]:
+        raise ValueError(f"Id InterFast de {case['ref']} inconnu : relire les heures reçues d'abord, "
+                         "jamais de clôture sans id certain")
+    return case
+
+
+def _minutes_du_jour(db, ch: str, jour: str) -> dict:
+    """{personne: minutes travaillées sur ce CH ce jour-là} — la clé des groupes."""
+    tot = {}
+    for r in db.execute("""SELECT * FROM pointages WHERE ch=? AND substr(debut, 1, 10)=? AND annule=0
+                           AND fin IS NOT NULL""", (ch, jour)):
+        tot[r["personne"]] = tot.get(r["personne"], 0.0) + _heures(dict(r), maintenant())
+    return {k: round(v * 60) for k, v in tot.items()}
+
+
+def completer_case(db, ch: str, jour: str, groupe: str = "") -> int:
     """Les validés arrivés après la pose ont été ajoutés à la main dans la
     case InterFast : leurs pointages prennent la référence de la case.
     Sans ce geste, la case restait « à compléter » pour toujours et leur
-    semaine se dévalidait en silence."""
-    case = _case(db, ch, jour)
+    semaine se dévalidait en silence. Par groupe : seuls ceux qui ont le
+    temps du groupe ce jour-là."""
+    case = _case(db, ch, jour, groupe)
     lundi = _lundi_de(jour)
+    qui = [p for p, m in _minutes_du_jour(db, ch, jour).items() if not groupe or str(m) == groupe]
+    if not qui:
+        return 0
     with db:
         return db.execute(
-            """UPDATE pointages SET interfast=? WHERE ch=? AND substr(debut, 1, 10)=? AND annule=0
+            f"""UPDATE pointages SET interfast=? WHERE ch=? AND substr(debut, 1, 10)=? AND annule=0
                AND fin IS NOT NULL AND interfast IS NULL
-               AND personne IN (SELECT personne FROM validations WHERE lundi=?)""",
-            (case["ref"], ch, jour, lundi)).rowcount
+               AND personne IN (SELECT personne FROM validations WHERE lundi=?)
+               AND personne IN ({",".join("?" * len(qui))})""",
+            (case["ref"], ch, jour, lundi, *qui)).rowcount
 
 
 def contexte_case(db, ch: str, jour: str) -> dict:
@@ -2070,10 +2172,10 @@ def contexte_case(db, ch: str, jour: str) -> dict:
     return {"chantier_id": aff["interfast_id"] if aff else None, "technicien": tech[0] if tech else None}
 
 
-def ref_a_trancher(db, ch: str, jour: str, ref: str) -> str:
+def ref_a_trancher(db, ch: str, jour: str, ref: str, groupe: str = "") -> str:
     """Les contrôles de reference_case, avant d'aller chercher dans InterFast :
     la référence normalisée (« in00401 » → « IN00401 »), ou une erreur."""
-    case = _case(db, ch, jour)
+    case = _case(db, ch, jour, groupe)
     if case["ref"] != A_VERIFIER:
         raise ValueError(f"La case {ch} du {jour} a déjà sa référence ({case['ref']})")
     ref = ref.strip().upper()
@@ -2082,26 +2184,31 @@ def ref_a_trancher(db, ch: str, jour: str, ref: str) -> str:
     return ref
 
 
-def reference_case(db, ch: str, jour: str, ref: str, num=None) -> dict:
+def reference_case(db, ch: str, jour: str, ref: str, num=None, groupe: str = "") -> dict:
     """Une case « À VÉRIFIER » tranchée par le bureau, après un œil dans
     InterFast : elle y est (on garde sa vraie référence IN…), ou elle n'y
     est pas (on l'efface de RHI, et elle redevient prête à partir).
     Seule une case À VÉRIFIER se tranche : une vraie référence ne se
     réécrit pas."""
-    case = _case(db, ch, jour)
+    case = _case(db, ch, jour, groupe)
     if case["ref"] != A_VERIFIER:
         raise ValueError(f"La case {ch} du {jour} a déjà sa référence ({case['ref']})")
     ref = ref.strip().upper()
     if ref and not re.fullmatch(r"IN\d{4,6}", ref):
         raise ValueError("Une référence InterFast : IN suivi de chiffres (ex. IN00123)")
+    # Les pointages « À VÉRIFIER » de CE groupe : ceux qui ont son temps.
+    qui = [p for p, m in _minutes_du_jour(db, ch, jour).items() if not groupe or str(m) == groupe]
+    marques = ",".join("?" * len(qui)) or "NULL"
     with db:
         if ref:
-            db.execute("UPDATE cases_interfast SET ref=?, num=? WHERE ch=? AND jour=?", (ref, num, ch, jour))
+            db.execute("UPDATE cases_interfast SET ref=?, num=? WHERE ch=? AND jour=? AND groupe=?",
+                       (ref, num, ch, jour, groupe))
         else:
-            db.execute("DELETE FROM cases_interfast WHERE ch=? AND jour=?", (ch, jour))
-        db.execute("""UPDATE pointages SET interfast=? WHERE interfast=? AND ch=?
-                      AND substr(debut, 1, 10)=?""", (ref or None, A_VERIFIER, ch, jour))
-    return {"ch": ch, "jour": jour, "ref": ref or None}
+            db.execute("DELETE FROM cases_interfast WHERE ch=? AND jour=? AND groupe=?", (ch, jour, groupe))
+        db.execute(f"""UPDATE pointages SET interfast=? WHERE interfast=? AND ch=?
+                      AND substr(debut, 1, 10)=? AND personne IN ({marques})""",
+                   (ref or None, A_VERIFIER, ch, jour, *qui))
+    return {"ch": ch, "jour": jour, "groupe": groupe, "ref": ref or None}
 
 
 def cases_posees(db, lundi: dt.date) -> list:
@@ -2114,7 +2221,7 @@ def cases_posees(db, lundi: dt.date) -> list:
         users = [u[0] for u in db.execute(
             """SELECT DISTINCT pe.interfast_user_id FROM pointages po JOIN personnes pe ON pe.nom = po.personne
                WHERE po.interfast=? AND pe.interfast_user_id IS NOT NULL""", (r["ref"],))]
-        sortie.append({"ref": r["ref"], "num": r["num"], "ch": r["ch"],
+        sortie.append({"ref": r["ref"], "num": r["num"], "ch": r["ch"], "groupe": r["groupe"],
                        "jour": dt.date.fromisoformat(r["jour"]), "users": users,
                        **contexte_case(db, r["ch"], r["jour"])})
     return sortie
@@ -2125,10 +2232,12 @@ def _paris(iso_utc: str) -> str:
     return _iso(t.astimezone(PARIS).replace(tzinfo=None))
 
 
-def enregistrer_suivi(db, ch: str, jour: str, ref: str, num, entrees: list) -> None:
+def enregistrer_suivi(db, ch: str, jour: str, ref: str, num, entrees: list, groupe: str = "") -> None:
     """Ce qu'InterFast a reçu à la clôture de la case. Aucune entrée : la
-    case n'est pas encore terminée. La case se désigne par (ch, jour) : une
-    référence InterFast peut en désigner plusieurs (05/11/2026)."""
+    case n'est pas encore terminée — sauf si RHI l'a déjà terminée lui-même
+    (PUT /finished confirmé) : on ne la « dé-termine » pas. La case se
+    désigne par (ch, jour, groupe) : une référence InterFast peut en
+    désigner plusieurs (05/11/2026)."""
     par_user = {}
     for e in entrees:
         u = par_user.setdefault(e["user"], {"debut": _paris(e["debut"]), "fin": _paris(e["fin"]),
@@ -2137,8 +2246,9 @@ def enregistrer_suivi(db, ch: str, jour: str, ref: str, num, entrees: list) -> N
         u["minutes"] += e["minutes"]
         u["pause"] += e["pause"]
     with db:
-        db.execute("UPDATE cases_interfast SET num=COALESCE(?, num), terminee=?, relue_le=? WHERE ch=? AND jour=?",
-                   (num, 1 if par_user else 0, _iso(maintenant()), ch, str(jour)))
+        db.execute("""UPDATE cases_interfast SET num=COALESCE(?, num), terminee=MAX(terminee, ?), relue_le=?
+                      WHERE ch=? AND jour=? AND groupe=?""",
+                   (num, 1 if par_user else 0, _iso(maintenant()), ch, str(jour), groupe))
         db.execute("DELETE FROM heures_interfast WHERE ref=?", (ref,))
         db.executemany("INSERT INTO heures_interfast VALUES (?,?,?,?,?,?)",
                        [(ref, uid, u["debut"], u["fin"], u["minutes"], u["pause"]) for uid, u in par_user.items()])

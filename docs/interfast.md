@@ -115,9 +115,19 @@ envoyer deux fois.
 **En place (29/09/2026), écriture toujours coupée** — bureau → *Vers
 InterFast* :
 
-- une **case par CH et par jour**, avec toute l'équipe qui a pointé ce CH ce
-  jour-là (`base.envois`) : de la première arrivée au dernier départ,
-  techniciens par leur nom InterFast ;
+- une **case par CH, par jour et par groupe d'heures identiques**
+  (`base.envois`, décision de Serge, 05/11/2026) : ceux qui ont exactement
+  le même temps travaillé ce jour-là sur ce CH partagent une case ; celui
+  qui a 30 min de plus a la sienne. Heure de la case : le premier début du
+  groupe ; durée : le temps travaillé (pauses du midi exclues) — 8:00 + 8 h
+  → case 8:00–16:00 : le total et le coût sont justes, l'heure de fin est
+  théorique (accepté). Titre « RHI · CH… · pointage » s'il n'y a qu'un
+  groupe ce jour-là, « RHI · CH… · pointage · JD PM » (initiales du groupe)
+  s'il y en a plusieurs ; l'anti-doublon cherche ce titre exact, groupe par
+  groupe. Pourquoi : à la clôture, InterFast donne à CHAQUE technicien le
+  créneau planifié de la case (voir plus bas) ; seuls ceux qui ont le même
+  temps peuvent donc la partager. Une case posée avant les groupes garde
+  toute l'équipe du jour (groupe vide en base) ;
 - sous chaque case, **ce qu'il faudra saisir en la terminant** dans
   InterFast, par technicien : début, fin, pause (qui comprend le temps passé
   sur un autre CH entre deux morceaux) ;
@@ -245,8 +255,8 @@ dev ni clé à manipuler. Tenu par `banc-couts`.
 
 Trois choses à y vérifier :
 
-1. la case se crée sur le bon chantier, avec toute l'équipe ;
-2. elle se termine avec les heures de chacun ;
+1. la case se crée sur le bon chantier, avec son groupe ;
+2. elle se termine avec les heures de chacun (RHI la termine lui-même) ;
 3. après validation de la feuille de temps, la marge réelle du chantier
    bouge.
 
@@ -284,16 +294,47 @@ Ce que l'API permet, vérifié avec `explorer_api` le 29/09/2026 :
   chemins `timesheets` sont en GET, et une recherche sur `finish` ou
   `status` ne renvoie rien d'utile (`/v1/processing-statuses` est vide).
 
-Conséquence pour le chemin A : RHI peut **poser les cases** d'une semaine
-validée, avec les bonnes heures, sur le bon CH et avec les bons
-techniciens. Mais **« terminer » et « valider » restent des clics dans
-InterFast** : le technicien termine, ou le bureau depuis l'app web, puis le
-bureau valide la feuille de temps. Pour que ces clics restent peu nombreux,
-mieux vaut **une case par CH et par jour, avec toute l'équipe dessus**,
-plutôt qu'une case par personne : le rapport d'intervention porte déjà les
-heures de chaque technicien séparément. À confirmer sur une affaire de
-test : une case planifiée mais non terminée ne compte **pas** dans la marge
-réelle, puisque seules les feuilles de temps y entrent.
+Conséquence pour le chemin A (29/09/2026) : RHI pouvait **poser les cases**,
+mais « terminer » et « valider » restaient des clics dans InterFast.
+
+### Terminer : la route existe (relevé du 05/11/2026)
+
+Le bouton « Terminer » de l'application web InterFast (intervention de test
+IN00416, id 2099387, CH00122) envoie **`PUT
+https://app.inter-fast.fr/v1/intervention/{id}/finished`**, et rien d'autre.
+Sonde avec la clé API le même jour (intervention de test IN00417, id
+2099608, CH00122, à supprimer à la main) :
+
+- **corps vide, en-tête `X-API-KEY`** : 200. Après :
+  `finished=true`, `lifecycleState="completed"`, `finishDate` et
+  `finishedBy` renseignés (`GET /v1/intervention/{id}`) ;
+- **un second appel** répond 200 sans rien changer (`finishDate` inchangée) :
+  réessayer est sans danger ;
+- **aucune heure n'est saisie** à la clôture : avant, `GET
+  /v1/interventions/{id}/timesheets` rend `[]` ; après, il rend, pour
+  **chaque technicien**, le créneau planifié de la case (`startHour`,
+  `endHour`, `breakTime` 0, `totalWorkedTime` = durée) ;
+- les heures valorisées dans la marge du chantier sont celles des
+  interventions **terminées** (CH00066 : 2 × 2 h × 38 € = 152,00 €).
+
+D'où le **découpage par groupe d'heures identiques** (plus haut) et la
+**clôture automatique** (décision de Serge) : juste après une pose réussie,
+référence ET id connus, RHI appelle `PUT /finished` sur l'id, puis relit
+l'intervention ; `finished=true` → la case est « terminée », et ses heures
+reçues sont relues aussitôt (chacun le créneau de sa case : pas d'écart
+fantôme). Échec de la clôture → la case reste « posée », avec le bouton
+**« Terminer dans InterFast »** pour réessayer
+(`POST /api/interfast/cases/terminer`). Une case **reprise** par
+l'anti-doublon et pas encore terminée est terminée de la même façon ; déjà
+terminée dans InterFast, elle est marquée sans second appel. **Jamais de
+clôture sans id certain** (pose sans id retrouvé : pas de bouton, 409 ; la
+relecture retrouvera l'id), ni hors de l'écriture permise (l'essai).
+Journal de chaque étape (`rhi.interfast` : « terminer CH… id … :
+terminée / refus HTTP … / sans réponse »), sans la clé.
+`banc-cases-terminees` tient le tout.
+
+Reste un clic dans InterFast : **valider la feuille de temps** de chacun
+(Équipe → la fiche → Feuilles de temps).
 
 Sources : [Suivre les heures et la rentabilité d'un chantier](https://help.inter-fast.co/fr/articles/11654458-suivre-les-heures-et-la-rentabilite-d-un-chantier),
 [Remplir un rapport d'intervention (App Web)](https://help.inter-fast.co/fr/articles/12890091-remplir-modifier-un-rapport-d-intervention-app-web),

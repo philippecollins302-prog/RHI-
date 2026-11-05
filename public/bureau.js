@@ -576,11 +576,14 @@ async function ongletEnvois() {
     <div class="carte">
       <p><strong>Où tombent les heures :</strong> sur les <strong>comptes de chaque chantier</strong> dans
         InterFast (feuilles de temps → marge réelle), une fois le RHI validé. Le planning InterFast n'est
-        que la porte d'entrée : InterFast n'accepte pas d'heures autrement. Une case par CH et par jour,
-        avec toute l'équipe ; dans InterFast, on la <strong>termine</strong> en recopiant les heures de
-        chacun (début, fin, pause), puis on <strong>valide la feuille de temps</strong> (Équipe → la fiche →
-        Feuilles de temps, en orange tant qu'elle n'est pas validée). Seules les heures validées
-        comptent dans la marge du chantier.</p>
+        que la porte d'entrée : InterFast n'accepte pas d'heures autrement. <strong>Une case par CH, par
+        jour et par groupe d'heures identiques</strong> : ceux qui ont exactement le même temps ce jour-là
+        partagent une case, celui qui a 30 min de plus a la sienne. Car en terminant une case, InterFast
+        donne à <em>chaque</em> technicien le créneau de la case. RHI la <strong>termine</strong> juste
+        après l'avoir posée ; il reste à <strong>valider la feuille de temps</strong> dans InterFast
+        (Équipe → la fiche → Feuilles de temps, en orange tant qu'elle n'est pas validée). Seules les
+        heures validées comptent dans la marge du chantier. L'heure de fin affichée est théorique
+        (début + temps travaillé) ; le total et le coût sont justes.</p>
       <p>${d.ecriture ? '' : d.essai.length
         ? `<span class="pastille p-ambre">Mode essai : seule l'affaire ${esc(d.essai.join(', '))} peut partir vers InterFast.</span>
            Les autres cases montrent ce qui partirait, sans rien envoyer.`
@@ -600,6 +603,8 @@ async function ongletEnvois() {
       <span class="ch">${esc(x.ch)}</span> ${esc(x.client)} <span class="doux">${esc(x.chantier)}</span>
       ${x.ref ? `<span class="pastille">${esc(x.ref)}</span>` : ''}
       ${x.ecriture && x.etat === 'prête' ? `<button class="btn" data-poser="${esc(x.id)}">${d.ecriture ? 'Poser cette case' : 'Essai : poser cette case dans InterFast'}</button>` : ''}
+      ${x.ecriture && x.a_terminer ? `<br><span class="doux">Posée, mais pas encore terminée dans InterFast : chacun n'y a pas encore ses heures.</span>
+        <button class="btn" data-terminer="${esc(x.id)}">Terminer dans InterFast</button>` : ''}
       ${x.blocages.length ? `<br><span class="doux">Bloquée : ${esc(x.blocages.join(' · '))}</span>` : ''}
       ${x.en_attente.length ? `<br><span class="doux">À valider d'abord : ${esc(x.en_attente.join(', '))}</span>` : ''}
       ${x.a_ajouter.length ? `<br><span class="doux">À ajouter à la main dans ${esc(x.ref)} : ${esc(x.a_ajouter.join(', '))}</span>
@@ -617,10 +622,13 @@ async function ongletEnvois() {
   const retour = $('#retour-envoi');
   const bouton = (id, fn) => { const b = $('#' + id); if (b) b.onclick = fn; };
   const geste = async (chemin, id, ref) => {
-    const [ch, jour] = id.split('|');
-    try { await api(chemin, {method: 'POST', json: {ch, jour, ref: ref || ''}}); afficher(); }
+    const [ch, jour, groupe] = id.split('|');
+    try { await api(chemin, {method: 'POST', json: {ch, jour, groupe: groupe || '', ref: ref || ''}}); afficher(); }
     catch (e) { dire(e.message); }
   };
+  document.querySelectorAll('[data-terminer]').forEach((b) => {
+    b.onclick = () => { b.disabled = true; geste('/api/interfast/cases/terminer', b.dataset.terminer); };
+  });
   document.querySelectorAll('[data-completer]').forEach((b) => {
     b.onclick = () => geste('/api/interfast/cases/completer', b.dataset.completer);
   });
@@ -636,7 +644,8 @@ async function ongletEnvois() {
     retour.textContent = 'Envoi en cours, une case à la fois…';
     try {
       const r = await api('/api/interfast/envois', {method: 'POST', json: {semaine: vue.semaine}});
-      dire(`${r.posees.length} cases posées` + (r.echecs.length ? `, ${r.echecs.length} en échec : ` +
+      const fermees = r.posees.filter((x) => x.terminee).length;
+      dire(`${esc(r.posees.length)} cases posées, ${esc(fermees)} terminées dans InterFast` + (r.echecs.length ? `, ${r.echecs.length} en échec : ` +
         r.echecs.map((x) => x.id + ' — ' + x.erreur).join(' · ') : ''));
       afficher();
     } catch (e) { retour.textContent = e.message; $('#poser').disabled = false; }
@@ -646,7 +655,8 @@ async function ongletEnvois() {
       b.disabled = true;
       try {
         const r = await api('/api/interfast/envois', {method: 'POST', json: {semaine: vue.semaine, cases: [b.dataset.poser]}});
-        dire(r.posees.length ? 'Case posée : ' + r.posees[0].ref : 'Échec : ' + r.echecs.map((x) => x.erreur).join(' · '));
+        dire(r.posees.length ? 'Case posée : ' + r.posees[0].ref + (r.posees[0].terminee ? ', terminée dans InterFast'
+          : ' — pas terminée : ' + (r.posees[0].cloture || '')) : 'Échec : ' + r.echecs.map((x) => x.erreur).join(' · '));
         afficher();
       } catch (e) { dire(e.message); b.disabled = false; }
     };
