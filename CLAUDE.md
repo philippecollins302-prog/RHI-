@@ -114,8 +114,10 @@ pas). Les constats sont gardés par jour : « 3ᵉ analyse d'affilée ».
   n'est pas essayé sur une affaire de test. Une semaine posée ne se dévalide
   plus.
 - Le MCP coupe ses réponses à ~4 000 caractères, ignore les paramètres
-  d'`appeler_api` et se trompe sous les appels parallèles : les comptes se
-  lisent un par un, en série (docs/interfast.md).
+  d'`appeler_api` et se trompe sous les appels parallèles. Les comptes se
+  lisent donc par l'API REST directe (`/v1/users`, clé en en-tête
+  `X-API-KEY`) ; le MCP n'est qu'un repli, un par un, en série, par grappes
+  d'ids et 300 lectures au plus (05/11/2026, docs/interfast.md).
 - Coût horaire des techniciens à 0 dans InterFast : aucune rentabilité
   possible là-bas tant qu'il n'est pas renseigné.
 - Clé `INTERFAST_VIP` dans l'environnement **uniquement** — ce dépôt est

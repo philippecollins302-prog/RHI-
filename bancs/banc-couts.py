@@ -55,6 +55,10 @@ vus = []
 
 
 def repondre(req: httpx.Request) -> httpx.Response:
+    if req.method == "GET" and req.url.path == "/v1/users":
+        # L'API REST refusée : ce banc éprouve le repli par le MCP
+        # (la REST a le sien, banc-comptes-interfast).
+        return httpx.Response(404, json={"message": "Not found"})
     corps = json.loads(req.content)
     args = corps["params"]["arguments"]
     vus.append(args["chemin"])

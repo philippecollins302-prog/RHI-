@@ -22,6 +22,7 @@ InterFast fausse un point d'affaire en silence ; un export, lui, se relit.
 """
 import asyncio
 import json
+import logging
 import os
 import re
 
@@ -193,47 +194,153 @@ async def utilisateur(uid: int, transport=None):
     return u
 
 
-async def utilisateurs(transport=None, trou=12, plafond=300) -> list:
-    """Tous les utilisateurs du compte.
+REST_URL = "https://app.inter-fast.fr/v1"
+REST_TAILLE = 100       # comptes par page
+REST_PAGES = 20         # garde : au-delà, ce n'est plus une liste de comptes
+REST_DELAI = 20         # secondes par page
+# Ces refus-là disent « pas par ici » (clé non admise en REST, route
+# absente) : on retombe sur le MCP. Les autres (429, 5xx) disent « pas
+# maintenant » : le repli, ~30 s de lectures en série, n'y changerait rien.
+REST_REPLI = {401, 403, 404}
+
+
+class _PasEnRest(InterFastIndisponible):
+    """L'API REST ne rend pas les comptes : repli sur le MCP."""
+
+
+class _Masque(logging.Filter):
+    """Le MCP prend la clé dans son adresse (?apiKey=) et httpx journalise
+    les adresses : la clé est masquée avant d'atteindre un journal."""
+
+    def filter(self, record):
+        k = cle()
+        if k and k in record.getMessage():
+            record.msg, record.args = record.getMessage().replace(k, "***"), ()
+        return True
+
+
+for _nom in ("httpx", "httpcore"):
+    if not any(isinstance(f, _Masque) for f in logging.getLogger(_nom).filters):
+        logging.getLogger(_nom).addFilter(_Masque())
+
+
+def _comptes_rest(r: httpx.Response) -> list:
+    """La page /v1/users : une liste, nue ou rangée sous une clé connue."""
+    try:
+        d = r.json()
+    except ValueError:
+        raise _PasEnRest("Réponse REST illisible") from None
+    if isinstance(d, dict):
+        d = next((d[k] for k in ("items", "content", "data", "results", "users")
+                  if isinstance(d.get(k), list)), None)
+    if not isinstance(d, list) or not all(isinstance(u, dict) and isinstance(u.get("id"), int) for u in d):
+        raise _PasEnRest("Réponse REST sans liste de comptes")
+    return d
+
+
+async def utilisateurs_rest(transport=None) -> list:
+    """Tous les comptes par l'API REST directe, page par page.
+
+    La clé part dans l'en-tête X-API-KEY (mode éprouvé sur /v1/orders), jamais
+    dans l'adresse ni dans un message. On s'arrête sur une page incomplète
+    ou vide, ou sur une page qui n'apporte aucun id nouveau (une API qui
+    ignorerait `page` rendrait sinon la même page vingt fois)."""
+    k = cle()
+    if not k:
+        raise InterFastIndisponible(f"Clé {CLES[entreprise()]} absente de l'environnement")
+    trouves = {}
+    async with httpx.AsyncClient(timeout=REST_DELAI, transport=transport) as h:
+        for page in range(REST_PAGES):
+            try:
+                r = await h.get(f"{REST_URL}/users", params={"page": page, "size": REST_TAILLE},
+                                headers={"X-API-KEY": k, "Accept": "application/json"})
+            except httpx.HTTPError as e:
+                raise InterFastIndisponible(f"InterFast injoignable : {type(e).__name__}") from e
+            if r.status_code in REST_REPLI:
+                raise _PasEnRest(f"API REST : HTTP {r.status_code}")
+            if r.status_code != 200:
+                raise InterFastIndisponible(f"InterFast répond HTTP {r.status_code} à la liste des comptes")
+            lus = _comptes_rest(r)
+            nouveaux = [u for u in lus if u["id"] not in trouves]
+            for u in nouveaux:
+                trouves[u["id"]] = _fiche_utilisateur(u)
+            if len(lus) < REST_TAILLE or not nouveaux:
+                return [trouves[i] for i in sorted(trouves)]
+    raise InterFastIndisponible(f"Plus de {REST_PAGES} pages de {REST_TAILLE} comptes : lecture arrêtée")
+
+
+def grappes(graines: list, trou: int) -> list:
+    """Les ids visibles, regroupés : deux graines distantes de plus de
+    2 × trou sont dans deux lots de comptes différents. Le 05/11/2026, des
+    comptes créés ce jour-là (ids vers 31 869) côtoyaient les anciens (vers
+    23 722) : lire toute la plage entre les deux faisait ~8 000 lectures."""
+    lots = []
+    for g in sorted(set(graines)):
+        if lots and g - lots[-1][-1] <= 2 * trou:
+            lots[-1].append(g)
+        else:
+            lots.append([g])
+    return lots
+
+
+async def utilisateurs_mcp(transport=None, trou=12, plafond=300) -> list:
+    """Le repli par le MCP, quand l'API REST ne répond pas.
 
     Pourquoi ce détour (constaté le 29/09/2026) : le MCP coupe toute réponse
     vers 4 000 caractères — la liste /v1/users s'arrête au 7e utilisateur —
     et `appeler_api` ne transmet ni `page` ni `size` ni `name`. Un
     utilisateur seul, lui, tient en 735 caractères. On part donc des ids
-    visibles dans la liste tronquée, et on lit les ids voisins un par un,
-    dans les deux sens, jusqu'à `trou` absents d'affilée (les comptes d'une
-    entreprise sont créés par lots : ids contigus, avec des trous).
+    visibles dans la liste tronquée, regroupés en grappes ; dans chaque
+    grappe on lit toute la plage (la liste est triée par NOM, pas par id :
+    Cédric et Djellal se cachaient entre deux ids visibles), puis les ids
+    voisins dans les deux sens, jusqu'à `trou` absents d'affilée.
+
+    `plafond` borne TOUT le balayage : au-delà, on s'arrête en le disant,
+    plutôt qu'une requête que le proxy coupe sans un mot.
 
     EN SÉRIE, jamais en parallèle : sous une rafale, le MCP a rendu des
     404 pour des comptes qui existent (Cédric, Djellal) — des gars
-    silencieusement absents du RHI. Une trentaine de secondes, au bureau,
-    une fois de temps en temps : c'est le bon prix."""
+    silencieusement absents du RHI."""
     texte = await outil("appeler_api", {"methode": "GET", "chemin": "/v1/users",
                                         "params": {"page": 0, "size": 100},
                                         "intention": "Lecture utilisateurs (RHI)"}, transport)
     graines = sorted({int(i) for i in re.findall(r'"id":\s*(\d+),\s*"firstName"', texte)})
     if not graines:
         raise InterFastIndisponible(f"Aucun utilisateur lisible : {texte[:120]}")
-    trouves, essais = {}, 0
-    # La liste est triée par NOM, pas par id : entre deux ids visibles se
-    # cachent des comptes (Cédric, Djellal manquaient). On lit donc toute
-    # la plage, pas seulement les ids affichés.
-    for i in range(graines[0], graines[-1] + 1):
-        essais += 1
+    trouves, lus = {}, set()
+
+    async def lire(i):
+        if i in lus:
+            return i in trouves
+        if len(lus) >= plafond:
+            raise InterFastIndisponible(
+                f"Plafond de {plafond} lectures atteint en relisant les comptes InterFast "
+                f"(ids visibles de {graines[0]} à {graines[-1]}) : lecture arrêtée, rien n'a changé")
+        lus.add(i)
         u = await utilisateur(i, transport)
         if u:
             trouves[i] = u
-    for sens in (1, -1):
-        i, absents = (graines[-1] if sens > 0 else graines[0]), 0
-        while absents < trou and essais < plafond and i + sens > 0:
-            i += sens
-            essais += 1
-            u = await utilisateur(i, transport)
-            if u:
-                trouves[i], absents = u, 0
-            else:
-                absents += 1
+        return bool(u)
+
+    for lot in grappes(graines, trou):
+        for i in range(lot[0], lot[-1] + 1):
+            await lire(i)
+        for sens in (1, -1):
+            i, absents = (lot[-1] if sens > 0 else lot[0]), 0
+            while absents < trou and i + sens > 0:
+                i += sens
+                absents = 0 if await lire(i) else absents + 1
     return [trouves[k] for k in sorted(trouves)]
+
+
+async def utilisateurs(transport=None, trou=12, plafond=300) -> list:
+    """Tous les utilisateurs du compte : par l'API REST (une poignée de
+    pages), et par le MCP seulement si la REST refuse (401, 403, 404) ou
+    rend un corps illisible."""
+    try:
+        return await utilisateurs_rest(transport)
+    except _PasEnRest:
+        return await utilisateurs_mcp(transport, trou, plafond)
 
 
 # « • [uuid] Import Optima - CH00045 (Réf: D0348)
