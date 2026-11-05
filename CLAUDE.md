@@ -108,11 +108,13 @@ pas). Les constats sont gardés par jour : « 3ᵉ analyse d'affilée ».
   bouton au bureau). Les 36 CH des plannings y étaient tous (29/09/2026).
 - L'API **n'écrit pas d'heures** : les timesheets ne se lisent qu'attachées à
   une intervention. Chemin décidé (Philippe, 29/09/2026) : RHI **pose des
-  cases dans le planning** (une par CH et par jour, toute l'équipe dessus) ;
-  on les **termine** puis on **valide la feuille de temps** dans InterFast —
-  l'API ne sait faire ni l'un ni l'autre. `ECRITURE = False` tant que ce
-  n'est pas essayé sur une affaire de test. Une semaine posée ne se dévalide
-  plus.
+  cases dans le planning**, puis les **termine** (`PUT
+  /v1/intervention/{id}/finished`, relevé le 05/11/2026) ; à la clôture,
+  InterFast donne à CHAQUE technicien le créneau de la case, d'où **une case
+  par CH, par jour et par groupe d'heures identiques** (Serge, 05/11/2026).
+  Reste à **valider la feuille de temps** dans InterFast. Jamais de clôture
+  sans id certain. `ECRITURE = False` tant que ce n'est pas essayé sur une
+  affaire de test. Une semaine posée ne se dévalide plus.
 - Le MCP coupe ses réponses à ~4 000 caractères, ignore les paramètres
   d'`appeler_api` et se trompe sous les appels parallèles. Les comptes se
   lisent donc par l'API REST directe (`/v1/users`, clé en en-tête

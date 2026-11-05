@@ -772,22 +772,72 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
             except interfast.InterFastIndisponible as err:
                 echecs.append({"id": case["id"], "erreur": str(err)})
                 continue
-            base.case_posee(c, case, str(ref), getattr(ref, "num", None))
-            posees.append({"id": case["id"], "ref": str(ref)})
+            num = getattr(ref, "num", None)
+            base.case_posee(c, case, str(ref), num)
+            posee = {"id": case["id"], "ref": str(ref), "terminee": False}
+            # Juste après la pose, RHI la termine (décision de Serge,
+            # 05/11/2026) : c'est la clôture qui donne à chaque technicien
+            # ses heures dans InterFast. Jamais sans id certain ; un échec
+            # laisse la case « posée », avec « Terminer dans InterFast ».
+            if getattr(ref, "terminee", False):
+                base.case_terminee(c, case["ch"], case["jour"], case["groupe"])
+                posee["terminee"] = True
+            elif num:
+                try:
+                    await _terminer(c, case["ch"], case["jour"], case["groupe"], str(ref), num, t)
+                    posee["terminee"] = True
+                except interfast.InterFastIndisponible as err:
+                    posee["cloture"] = str(err)
+            else:
+                posee["cloture"] = "Id InterFast inconnu : pas de clôture (la relecture le retrouvera)"
+            posees.append(posee)
     return {"posees": posees, "echecs": echecs}
+
+
+async def _terminer(c, ch: str, jour: str, groupe: str, ref: str, num: int, t) -> None:
+    """PUT /finished, relu terminé, puis les heures reçues relues (le créneau
+    de chaque technicien) : l'onglet compare aussitôt, sans écart fantôme."""
+    await interfast.terminer_intervention(ch, num, t)
+    base.case_terminee(c, ch, jour, groupe)
+    try:
+        entrees = await interfast.heures_intervention(num, t)
+        base.enregistrer_suivi(c, ch, jour, ref, num, entrees, groupe)
+    except interfast.InterFastIndisponible:
+        pass   # terminée quand même ; « Relire les heures reçues » les lira
 
 
 class CaseDuBureau(BaseModel):
     ch: str
     jour: str
+    groupe: str = ""   # le temps du groupe, en minutes ; vide : une case d'avant les groupes
     ref: str = ""
+
+
+@app.post("/api/interfast/cases/terminer", dependencies=[Depends(acces_bureau)])
+async def api_terminer_case(k: CaseDuBureau, c=Depends(db)):
+    """« Terminer dans InterFast » : une case posée dont la clôture a échoué.
+    Jamais sans id certain (409) ; hors écriture permise : 403."""
+    if not interfast.ecriture_permise(k.ch):
+        raise HTTPException(403, f"Écriture InterFast coupée pour {k.ch} : rien n'est envoyé")
+    try:
+        case = base.a_terminer(c, k.ch, k.jour, k.groupe)
+    except KeyError as err:
+        raise HTTPException(404, str(err))
+    except ValueError as err:
+        raise HTTPException(409, str(err))
+    try:
+        await _terminer(c, k.ch, k.jour, k.groupe, case["ref"], case["num"],
+                        getattr(app.state, "transport_interfast", None))
+    except interfast.InterFastIndisponible as err:
+        raise HTTPException(503, str(err))
+    return {"ref": case["ref"], "terminee": True}
 
 
 @app.post("/api/interfast/cases/completer", dependencies=[Depends(acces_bureau)])
 def api_completer_case(k: CaseDuBureau, c=Depends(db)):
     """« Ajoutés dans InterFast » : les retardataires sont dans la case."""
     try:
-        return {"pointages": base.completer_case(c, k.ch, k.jour)}
+        return {"pointages": base.completer_case(c, k.ch, k.jour, k.groupe)}
     except KeyError as err:
         raise HTTPException(404, str(err))
 
@@ -801,13 +851,13 @@ async def api_reference_case(k: CaseDuBureau, c=Depends(db)):
     jour et du chantier de la case, et son id interne, ou on refuse avec la
     liste. InterFast injoignable : 503, rien n'est tranché."""
     try:
-        ref = base.ref_a_trancher(c, k.ch, k.jour, k.ref)
+        ref = base.ref_a_trancher(c, k.ch, k.jour, k.ref, k.groupe)
         num = None
         if ref:
             ctx = base.contexte_case(c, k.ch, k.jour)
             num = await interfast.retrouver_reference(ref, k.jour, ctx["chantier_id"], ctx["technicien"],
                                                       getattr(app.state, "transport_interfast", None))
-        return base.reference_case(c, k.ch, k.jour, ref, num)
+        return base.reference_case(c, k.ch, k.jour, ref, num, k.groupe)
     except KeyError as err:
         raise HTTPException(404, str(err))
     except ValueError as err:   # ReferenceAmbigue comprise
@@ -863,7 +913,8 @@ async def api_suivi(semaine: str, c=Depends(db)):
                 illisibles.append(case["ref"])
                 continue
             entrees = await interfast.heures_intervention(num, t) if num else []
-            base.enregistrer_suivi(c, case["ch"], case["jour"].isoformat(), case["ref"], num, entrees)
+            base.enregistrer_suivi(c, case["ch"], case["jour"].isoformat(), case["ref"], num, entrees,
+                                   case["groupe"])
             (terminees if entrees else a_terminer).append(case["ref"])
     except interfast.InterFastIndisponible as err:
         raise HTTPException(503, str(err))

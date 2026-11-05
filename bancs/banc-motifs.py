@@ -56,12 +56,17 @@ verif(autre and "Motif « autre » à valider" in autre[0]["alertes"], "« Autre
 # ── Vers InterFast : le hors affaire forme une case sur le CH FG ──
 e = base.envois(db, lundi, t(18))
 fg = [c for c in e["cases"] if c["ch"] == "CH00081"]
-verif(len(fg) == 2 and {c["jour"] for c in fg} == {"2026-09-28", "2026-09-29"},
-      f"une case CH00081 par jour de hors affaire : {[(c['ch'], c['jour']) for c in e['cases']]}")
-lun = next(c for c in fg if c["jour"] == "2026-09-28")
-verif(lun["heures"] == 2.5 and "Rangement (atelier)" in lun["description"]
-      and {x["personne"] for x in lun["equipe"]} == {"PAUL", "JEAN"},
-      f"Paul 1 h 30 (rangement, « autre ») + Jean 1 h d'ancien motif, lisibles dans la case : {lun['description']}")
+verif({c["jour"] for c in fg} == {"2026-09-28", "2026-09-29"},
+      f"des cases CH00081 les jours de hors affaire : {[(c['ch'], c['jour']) for c in e['cases']]}")
+# Une case par groupe d'heures identiques (05/11/2026) : Paul 1 h 30, Jean 1 h.
+lun = {x["personne"]: c for c in fg if c["jour"] == "2026-09-28" for x in c["equipe"]}
+verif(set(lun) == {"PAUL", "JEAN"} and lun["PAUL"] is not lun["JEAN"]
+      and (lun["PAUL"]["heures"], lun["JEAN"]["heures"]) == (1.5, 1.0),
+      f"le 28 : Paul 1 h 30 et Jean 1 h, deux groupes, deux cases : {[(c['id'], c['heures']) for c in fg]}")
+verif("Rangement (atelier)" in lun["PAUL"]["description"] and lun["PAUL"]["description"].endswith(" · P"),
+      f"le motif de Paul est lisible dans SA case, avec ses initiales : {lun['PAUL']['description']}")
+verif("Rangement" not in lun["JEAN"]["description"],
+      f"pas dans celle de Jean, qui n'a pas rangé : {lun['JEAN']['description']}")
 os.environ["RHI_CH_FRAIS_GENERAUX"] = ""
 verif(not [c for c in base.envois(db, lundi, t(18))["cases"] if not c["ch"] or c["ch"] == "CH00081"],
       "sans CH FG réglé, le hors affaire reste hors d'InterFast (comme avant)")
