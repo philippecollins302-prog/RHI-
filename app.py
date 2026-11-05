@@ -651,11 +651,24 @@ async def api_interfast_chantiers(c=Depends(db)):
     return base.importer_chantiers(c, liste)
 
 
+DELAI_UTILISATEURS = 90   # secondes, sous la coupure du proxy
+
+
 @app.post("/api/interfast/utilisateurs", dependencies=[Depends(acces_bureau)])
 async def api_interfast_utilisateurs(c=Depends(db)):
-    """Relie les personnes de RHI aux utilisateurs InterFast (lecture seule)."""
+    """Relie les personnes de RHI aux utilisateurs InterFast (lecture seule).
+
+    Bornée à DELAI_UTILISATEURS : au-delà, le proxy de Clever coupait la
+    requête (« ✗ » sans un mot au bureau) et la lecture continuait derrière.
+    wait_for l'annule et le bureau lit pourquoi."""
     try:
-        liste = await interfast.utilisateurs(getattr(app.state, "transport_interfast", None))
+        liste = await asyncio.wait_for(
+            interfast.utilisateurs(getattr(app.state, "transport_interfast", None)),
+            getattr(app.state, "delai_utilisateurs", DELAI_UTILISATEURS))
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Lecture des comptes InterFast trop longue (plus de "
+                                 f"{getattr(app.state, 'delai_utilisateurs', DELAI_UTILISATEURS):g} s) : "
+                                 "arrêtée, rien n'a changé. Réessayer plus tard.")
     except interfast.InterFastIndisponible as e:
         raise HTTPException(503, str(e))
     return base.importer_utilisateurs(c, liste)

@@ -32,11 +32,31 @@ l'agence « Serrurerie » (et « Grand compte » pour certains). Deux constats :
 - sous des appels **en parallèle**, il rend des 404 pour des comptes qui
   existent (réponses mélangées), et parfois des 401 passagers.
 
-RHI lit donc les comptes **un par un, en série** (`/v1/users/{id}`, 735
-caractères), sur toute la plage d'ids visibles puis au-delà jusqu'à 12 absents
-d'affilée — la liste est triée par nom, les ids « cachés » se trouvent entre
-les ids affichés. Une minute pour 47 comptes. Chaque réponse est vérifiée
-(l'id rendu doit être l'id demandé) et les 401/429/5xx sont retentés.
+**Depuis le 05/11/2026, RHI lit les comptes par l'API REST directe** :
+`GET https://app.inter-fast.fr/v1/users?page=N&size=100`, clé dans l'en-tête
+`X-API-KEY` (la même que celle du MCP ; mode éprouvé sur `/v1/orders`), page
+par page jusqu'à une page incomplète, vide ou sans id nouveau, 20 pages au
+plus, 20 s par page. La clé n'est ni dans l'adresse, ni dans un message.
+
+Ce jour-là, des comptes créés le matin portaient des ids vers 31 869, les
+anciens vers 23 722 : l'ancienne lecture balayait toute la plage entre les
+deux (~8 000 lectures en série), le proxy coupait la requête (« ✗ » sans
+message au bureau) et la lecture continuait côté serveur.
+
+**Repli par le MCP**, seulement si la REST répond 401, 403, 404 ou un corps
+illisible (un 429 ou un 5xx est dit tel quel : le repli n'y changerait rien).
+Les comptes s'y lisent **un par un, en série** (`/v1/users/{id}`, 735
+caractères). Les ids visibles dans la liste tronquée sont regroupés en
+**grappes** (deux ids distants de plus de 24 sont dans deux lots différents) ;
+chaque grappe est lue sur toute sa plage — la liste est triée par nom, des ids
+« cachés » se trouvent entre les ids affichés — puis au-delà jusqu'à 12 absents
+d'affilée. **300 lectures au plus pour tout le balayage** : au-delà, RHI
+s'arrête et le dit. Chaque réponse est vérifiée (l'id rendu doit être l'id
+demandé) et les 401/429/5xx sont retentés. Le MCP prend la clé dans son
+adresse : httpx la journaliserait, elle est masquée (`***`).
+
+La route `POST /api/interfast/utilisateurs` s'arrête à 90 s (504, avec la
+raison), sous la coupure du proxy. `banc-comptes-interfast` tient tout cela.
 
 Ce que la relecture a montré le 29/09/2026 : 5 personnes des plannings reliées
 d'office, 1 prénom porté par deux comptes (le bureau tranche dans l'onglet
