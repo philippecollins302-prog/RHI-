@@ -82,6 +82,28 @@ Ce qui a été demandé, et ce qui en a été fait :
   téléphone de l'entreprise.
 - **Essai** : sur l'affaire de test CH00066, avec les poseurs d'abord.
 
+## V1.4 — plannings SharePoint et personnes Silae (fait, 05/11/2026)
+- ~~**Plannings SharePoint par Microsoft Graph**~~ — fait : un lien
+  `graph.microsoft.com/v1.0/drives/{driveId}/items/{itemId}/content` dans
+  `RHI_PLANNINGS_URL` est lu avec un jeton applicatif Entra (`Sites.Selected`,
+  lecture seule sur le site). Refus dits en clair (401, 403, 404, variables
+  absentes) ; 20 Mo, empreinte et « une erreur ne touche jamais au planning
+  en place » gardés (`banc-depot-graph`). C'est ce qui manquait au « Reste »
+  de la V1.3 : savoir où vivent les Excel.
+- ~~**Les personnes viennent de Silae**~~ — fait : la route RHI de
+  `mcp.vipplus.com` (VIPPLUS, MELMAR, REGA ; lecture seule) est relue chaque
+  heure et à la demande. Silae ne crée personne : chaque nom du planning se
+  rattache à un salarié au bureau (proposition automatique, intitulé
+  d'emploi à côté pour repérer un homonyme d'une autre BU, choix manuel,
+  import CSV), ou passe « ne pointe pas ». Un nom en attente pointe quand
+  même (« jamais bloqué », décision du 05/11/2026). Sans `RHI_SILAE_URL`
+  (Alfa), rien ne change (`banc-silae`).
+- Un seul jeu d'identifiants Entra pour les deux, un jeton par scope
+  (`rhi/entra.py`, `banc-entra`). **Reste** : poser `RHI_PLANNINGS_URL` avec
+  les liens Graph, et noter l'échéance du secret.
+- Le « lien avec Silae pour la paie » vu à la revue du 01/10 reste à faire :
+  ici, Silae ne sert qu'à savoir QUI pointe, pas à envoyer des heures.
+
 ## V2 — menuiserie (Alfa)
 - ~~Lecteurs des plannings MEN~~ — faits (atelier : noms en colonne B ;
   pose : onglet par année, équipes séparées par un retour à la ligne).

@@ -11,6 +11,13 @@ changé (empreinte) : un planning inchangé ne refait rien.
 Un lien de partage porte souvent un jeton : il n'est JAMAIS écrit, ni en
 base ni à l'écran ni au journal — seulement son hôte et une empreinte.
 Le dépôt à la main (onglet Plannings) reste : c'est le secours.
+
+SharePoint par Microsoft Graph (04/11/2026) : un lien dont l'hôte est
+graph.microsoft.com (…/v1.0/drives/{driveId}/items/{itemId}/content) est lu
+avec un jeton applicatif Entra (rhi/entra.py, scope Graph) — le site ne donne
+qu'un droit de lecture (Sites.Selected). Les autres liens https gardent le GET
+sans authentification. Graph répond par une redirection vers une adresse de
+téléchargement pré-signée : httpx ne lui transmet pas le jeton (autre hôte).
 """
 import hashlib
 import os
@@ -18,10 +25,28 @@ import re
 import tempfile
 from urllib.parse import urlsplit
 
-from . import base, lecture
+from . import base, entra, lecture
 
 TAILLE_MAX = 20_000_000
 MINUTES_DEFAUT = 5
+HOTE_GRAPH = "graph.microsoft.com"
+
+
+class LienRefuse(Exception):
+    """Un refus qu'on sait expliquer. Le message est le statut montré au
+    bureau : il ne recopie jamais le lien ni le jeton."""
+
+
+# Ce que Graph veut dire, en clair pour le bureau.
+STATUTS_GRAPH = {
+    401: "Graph : identifiants refusés",
+    403: "Graph : pas de droit lecture sur ce site (Sites.Selected)",
+    404: "Graph : fichier introuvable (identifiant changé ?)",
+}
+
+
+def est_graph(url: str) -> bool:
+    return (urlsplit(url).hostname or "").lower() == HOTE_GRAPH
 
 
 def sources() -> list:
@@ -42,9 +67,23 @@ def etiquette(url: str) -> str:
 
 
 def telecharger(url: str) -> bytes:
-    import httpx
-    with httpx.Client(follow_redirects=True, timeout=60) as client:
-        with client.stream("GET", url) as r:
+    entetes = {}
+    if est_graph(url):
+        if not entra.configure():
+            raise LienRefuse("Graph : lien posé mais variables RHI_GRAPH_TENANT, RHI_GRAPH_CLIENT_ID, "
+                             "RHI_GRAPH_SECRET absentes")
+        try:
+            entetes["Authorization"] = "Bearer " + entra.jeton(entra.SCOPE_GRAPH)
+        except entra.IdentifiantsRefuses:
+            raise LienRefuse(STATUTS_GRAPH[401]) from None
+        except entra.EntraIndisponible as e:
+            raise LienRefuse(f"Graph : pas de jeton ({e})") from None
+    with entra.client(follow_redirects=True, timeout=60) as client:
+        with client.stream("GET", url, headers=entetes) as r:
+            if est_graph(url) and r.status_code in STATUTS_GRAPH:
+                if r.status_code == 401:
+                    entra.oublier(entra.SCOPE_GRAPH)   # le prochain passage en redemande un
+                raise LienRefuse(STATUTS_GRAPH[r.status_code])
             r.raise_for_status()
             morceaux, taille = [], 0
             for m in r.iter_bytes():
@@ -75,6 +114,11 @@ def relever(db, entreprise: str = "VIP", lire_lien=telecharger) -> list:
         source = etiquette(url)
         try:
             contenu = lire_lien(url)
+        except LienRefuse as e:  # Graph : un refus qu'on sait dire
+            statut = str(e)
+            _noter(db, source, statut, maintenant)
+            sortie.append({"source": source, "statut": statut})
+            continue
         except Exception as e:  # réseau, 404, lien expiré, trop gros
             # Le message d'erreur peut recopier le lien (jeton compris) : on ne garde que sa nature.
             statut = "injoignable : " + type(e).__name__

@@ -26,6 +26,12 @@ est faite.
   planning importé, pointages ; le RHI et le point d'affaire.
 - `rhi/interfast.py` — client MCP InterFast, **écriture coupée**
   (`ECRITURE = False`).
+- `rhi/entra.py` — jetons Entra *client credentials* : un seul jeu
+  d'identifiants (`RHI_GRAPH_*`), un jeton par scope (Graph, Silae), gardé en
+  mémoire jusqu'à 5 min de l'expiration, **jamais écrit** (base, écran,
+  journal). `rhi/depot_auto.py` lit les liens `graph.microsoft.com` avec le
+  jeton Graph ; `rhi/silae.py` lit les salariés (route RHI de
+  `mcp.vipplus.com`, lecture seule). Bancs : faux serveurs (`entra.TRANSPORT`).
 - `public/index.html` + `terrain.js` — la tablette de l'atelier / le
   téléphone du chef d'équipe de pose.
 - `public/mode-emploi.html` — le guide, pour les gars et pour le bureau. **Ne
@@ -36,6 +42,14 @@ est faite.
   moment, personnes (compte InterFast, coût horaire), dépôt des plannings.
 
 ## Règles de fond (décidées en réunion — ne pas les perdre)
+- **Les personnes viennent de Silae, rattachées au bureau** (04-05/11/2026).
+  Silae liste toute l'entité : il ne crée personne, il propose ; chaque nom
+  du planning se rattache à un salarié (table `alias`) ou passe « ne pointe
+  pas », toujours validé au bureau. Un nom sans alias **pointe quand même**
+  et attend dans « À rattacher » : « jamais bloqué » l'emporte (Serge,
+  05/11/2026). Une lecture Silae ratée ne vide jamais la table. **Sans
+  `RHI_SILAE_URL`** (Alfa : dans aucun dossier Silae lu par RHI), l'import
+  fait comme avant. Rien ne s'écrit dans Silae.
 - **Jamais bloqué.** Toucher un chantier arrête le précédent ; un CH absent
   des plannings est accepté et signalé ; un arrêt oublié reste ouvert et
   signalé. Tout ce qui est douteux se corrige **au bureau**, rien ne se

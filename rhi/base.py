@@ -228,6 +228,46 @@ CREATE TABLE IF NOT EXISTS heures_interfast (
 );
 CREATE INDEX IF NOT EXISTS pointages_personne ON pointages(personne, debut);
 CREATE INDEX IF NOT EXISTS pointages_ch ON pointages(ch);
+-- Les salariés lus dans Silae (route RHI de mcp.vipplus.com, 04/11/2026).
+-- Silae liste TOUTE l'entité (bureau, autres BU) : aucune personne n'en est
+-- créée, ils ne servent qu'à proposer des rattachements validés au bureau.
+CREATE TABLE IF NOT EXISTS salaries (
+  dossier TEXT NOT NULL,           -- VIPPLUS | MELMAR | REGA : l'entité
+  matricule TEXT NOT NULL,         -- texte : « 00768 », zéros compris
+  nom TEXT NOT NULL,
+  prenom TEXT NOT NULL,
+  intitule_emploi TEXT NOT NULL DEFAULT '',
+  etablissement TEXT NOT NULL DEFAULT '',
+  date_entree TEXT,
+  date_sortie TEXT,
+  vu_le TEXT NOT NULL,
+  PRIMARY KEY (dossier, matricule)
+);
+-- Un nom du planning (« JEAN », « LUC & MARC ») et ce qu'il désigne : un
+-- salarié Silae, ou personne (« ne pointe pas » : libellé d'équipe,
+-- sous-traitant, ancien, salarié d'une autre BU). Toujours validé au bureau.
+CREATE TABLE IF NOT EXISTS alias (
+  nom_planning TEXT PRIMARY KEY,
+  dossier TEXT,
+  matricule TEXT,
+  ne_pointe_pas INTEGER NOT NULL DEFAULT 0,
+  valide_par TEXT NOT NULL DEFAULT '',
+  valide_le TEXT
+);
+-- Les noms du planning sans alias, tant que le bureau ne les a pas tranchés.
+CREATE TABLE IF NOT EXISTS noms_a_rattacher (
+  nom_planning TEXT PRIMARY KEY,
+  genre TEXT NOT NULL,             -- atelier | pose
+  vu_le TEXT NOT NULL,
+  nb_cases INTEGER NOT NULL DEFAULT 0
+);
+-- La dernière lecture d'une source extérieure (Silae) : quand, et comment.
+CREATE TABLE IF NOT EXISTS lectures (
+  source TEXT PRIMARY KEY,
+  le TEXT NOT NULL,
+  statut TEXT NOT NULL,
+  reussie_le TEXT
+);
 """
 
 
@@ -286,7 +326,11 @@ AJOUTS = {
     "personnes": [("nom_complet", "TEXT NOT NULL DEFAULT ''"), ("interfast_user_id", "INTEGER"),
                   ("cout_interfast", "REAL"), ("cout_horaire", "REAL"),
                   # Ajouté au bureau (RH), pas venu d'un planning : un intérimaire.
-                  ("interim", "INTEGER NOT NULL DEFAULT 0")],
+                  ("interim", "INTEGER NOT NULL DEFAULT 0"),
+                  # Le salarié Silae (04/11/2026) : posé par le rattachement
+                  # validé au bureau. Intérimaire : dossier 'INTERIM', pas de
+                  # matricule. NULL : pas encore rattaché.
+                  ("dossier", "TEXT"), ("matricule", "TEXT")],
     # Heure de RÉCEPTION, quand elle diffère de l'heure du geste : pointé hors
     # ligne, rejoué au retour du réseau.
     "pointages": [("recu", "TEXT")],
@@ -333,6 +377,47 @@ def chantiers_de(libelle: str, codes: list) -> dict:
     return {}
 
 
+def silae_actif() -> bool:
+    """Les personnes viennent de Silae (RHI_SILAE_URL posé) : les noms du
+    planning se rattachent à un salarié au bureau. Sans lui (Alfa, qui n'est
+    dans aucun dossier Silae lu par RHI), l'import fait comme avant."""
+    return bool(os.getenv("RHI_SILAE_URL", "").strip())
+
+
+def _ranger_noms(db, donnees: dict, origine: str, now: str) -> None:
+    """Les noms d'un planning importé (décision du 05/11/2026).
+
+    - un alias « ne pointe pas » : aucune personne, rien ne se réactive ;
+    - un alias vers un salarié : la personne existe (créée si besoin, c'est
+      le bureau qui a validé) et porte son dossier et son matricule ;
+    - sans alias : la personne est créée comme avant — « jamais bloqué » : un
+      nouveau doit pouvoir pointer dès le premier jour — mais, Silae branché,
+      le nom va aussi dans « À rattacher », jusqu'à ce que le bureau tranche.
+    Les cases du planning gardent le nom brut : elles suivent la personne,
+    dont le nom EST le nom du planning."""
+    cases = {}
+    for a in donnees["affectations"]:
+        cases[a["personne"]] = cases.get(a["personne"], 0) + 1
+    for nom in donnees["personnes"]:
+        alias = db.execute("SELECT * FROM alias WHERE nom_planning=?", (nom,)).fetchone()
+        if alias and alias["ne_pointe_pas"]:
+            continue
+        if alias:
+            db.execute("""INSERT INTO personnes(nom, equipe, vu_le, dossier, matricule) VALUES (?,?,?,?,?)
+                          ON CONFLICT(nom) DO UPDATE SET vu_le=excluded.vu_le, dossier=excluded.dossier,
+                            matricule=excluded.matricule""",
+                       (nom, origine, now, alias["dossier"], alias["matricule"]))
+            continue
+        db.execute("""INSERT INTO personnes(nom, equipe, vu_le) VALUES (?,?,?)
+                      ON CONFLICT(nom) DO UPDATE SET vu_le=excluded.vu_le""", (nom, origine, now))
+        interim = db.execute("SELECT 1 FROM personnes WHERE nom=? AND dossier='INTERIM'", (nom,)).fetchone()
+        if silae_actif() and not interim:
+            db.execute("""INSERT INTO noms_a_rattacher(nom_planning, genre, vu_le, nb_cases) VALUES (?,?,?,?)
+                          ON CONFLICT(nom_planning) DO UPDATE SET genre=excluded.genre,
+                            vu_le=excluded.vu_le, nb_cases=excluded.nb_cases""",
+                       (nom, origine, now, cases.get(nom, 0)))
+
+
 def importer(db, donnees: dict) -> dict:
     """Range le résultat de lecture.lire() dans la base.
 
@@ -352,10 +437,7 @@ def importer(db, donnees: dict) -> dict:
                                 e["fin"].isoformat() if e["fin"] else None, e["statut"], e["commentaire"]))
         return {"nature": "bet", "personnes": 0, "affectations": 0, "etudes": len(donnees["etudes"])}
     with db:
-        for nom in donnees["personnes"]:
-            db.execute("""INSERT INTO personnes(nom, equipe, vu_le) VALUES (?,?,?)
-                          ON CONFLICT(nom) DO UPDATE SET vu_le=excluded.vu_le""",
-                       (nom, origine, now))
+        _ranger_noms(db, donnees, origine, now)
         db.execute("DELETE FROM planning WHERE origine=?", (origine,))
         for a in donnees["affectations"]:
             noms = chantiers_de(a["libelle"], a["codes"])
@@ -545,8 +627,12 @@ def ajouter_personne(db, nom: str, equipe: str, quand: dt.datetime) -> dict:
         if ancien:
             db.execute("UPDATE personnes SET actif=1, equipe=? WHERE nom=?", (equipe, nom))
         else:
-            db.execute("""INSERT INTO personnes(nom, equipe, actif, vu_le, interim)
-                          VALUES (?, ?, 1, ?, 1)""", (nom, equipe, _iso(quand)))
+            # Pas dans Silae : dossier 'INTERIM', sans matricule (04/11/2026).
+            db.execute("""INSERT INTO personnes(nom, equipe, actif, vu_le, interim, dossier, matricule)
+                          VALUES (?, ?, 1, ?, 1, 'INTERIM', NULL)""", (nom, equipe, _iso(quand)))
+            # Un nom qui attendait d'être rattaché et que le bureau ajoute comme
+            # intérimaire est tranché : il sort de « À rattacher ».
+            db.execute("DELETE FROM noms_a_rattacher WHERE nom_planning=?", (nom,))
     return dict(db.execute("SELECT * FROM personnes WHERE nom=?", (nom,)).fetchone()) | {"deja": bool(ancien)}
 
 
@@ -555,6 +641,169 @@ def personnes_detail(db) -> list:
     c = couts(db)
     return [dict(r) | {"cout_retenu": c.get(r["nom"])}
             for r in db.execute("SELECT * FROM personnes ORDER BY equipe, nom")]
+
+
+# ═══════════════════════ SALARIÉS SILAE ET RATTACHEMENTS ═══════════════════════
+# Les personnes viennent de Silae, pas du planning (04/11/2026). Silae liste
+# toute l'entité : il ne crée personne, il PROPOSE ; le bureau valide chaque
+# rattachement, ou marque un nom « ne pointe pas ».
+
+DOSSIERS_SILAE = ("VIPPLUS", "MELMAR", "REGA")
+CHAMPS_SILAE = ("dossier", "matricule", "nom", "prenom", "intitule_emploi", "etablissement",
+                "date_entree", "date_sortie")
+
+
+def noter_lecture(db, source: str, statut: str, le: dt.datetime, reussie: bool) -> None:
+    with db:
+        db.execute("""INSERT INTO lectures(source, le, statut, reussie_le) VALUES (?,?,?,?)
+                      ON CONFLICT(source) DO UPDATE SET le=excluded.le, statut=excluded.statut,
+                        reussie_le=COALESCE(excluded.reussie_le, lectures.reussie_le)""",
+                   (source, _iso(le), statut, _iso(le) if reussie else None))
+
+
+def lecture_de(db, source: str) -> dict | None:
+    r = db.execute("SELECT * FROM lectures WHERE source=?", (source,)).fetchone()
+    return dict(r) if r else None
+
+
+def importer_salaries(db, lignes: list, quand: dt.datetime) -> dict:
+    """Remplace la table par une lecture Silae COMPLÈTE et déjà vérifiée
+    (silae.lire). Un salarié absent de la lecture n'est plus actif : il sort.
+    Les alias et les personnes ne bougent pas : un parti garde son historique."""
+    now = _iso(quand)
+    avant = {(r["dossier"], r["matricule"]) for r in db.execute("SELECT dossier, matricule FROM salaries")}
+    lus = {(l["dossier"], l["matricule"]) for l in lignes}
+    with db:
+        for l in lignes:
+            db.execute("""INSERT INTO salaries VALUES (?,?,?,?,?,?,?,?,?)
+                          ON CONFLICT(dossier, matricule) DO UPDATE SET nom=excluded.nom, prenom=excluded.prenom,
+                            intitule_emploi=excluded.intitule_emploi, etablissement=excluded.etablissement,
+                            date_entree=excluded.date_entree, date_sortie=excluded.date_sortie,
+                            vu_le=excluded.vu_le""",
+                       tuple(l[k] for k in CHAMPS_SILAE) + (now,))
+        for dossier, matricule in avant - lus:
+            db.execute("DELETE FROM salaries WHERE dossier=? AND matricule=?", (dossier, matricule))
+    return {"salaries": len(lus), "nouveaux": len(lus - avant), "partis": len(avant - lus)}
+
+
+def salaries(db) -> list:
+    """Les salariés actifs, avec le nom du planning qui les désigne déjà."""
+    return [dict(r) for r in db.execute(
+        """SELECT s.*, a.nom_planning AS alias FROM salaries s
+           LEFT JOIN alias a ON a.dossier=s.dossier AND a.matricule=s.matricule AND a.ne_pointe_pas=0
+           ORDER BY s.nom, s.prenom, s.dossier""")]
+
+
+def proposer(nom_planning: str, salaries_actifs: list) -> dict | None:
+    """Le salarié le plus probable pour un nom du planning : même prénom ou
+    même nom (sans casse ni accent), un salarié sans alias d'abord. Une
+    PROPOSITION seulement : un homonyme d'une autre BU est possible, c'est
+    pourquoi l'intitulé d'emploi est montré à côté."""
+    mots_planning = set(normaliser(nom_planning).split())
+    entier = normaliser(nom_planning)
+    candidats = []
+    for s in salaries_actifs:
+        nom, prenom = normaliser(s["nom"]), normaliser(s["prenom"])
+        score = (2 if nom and (nom in mots_planning or nom == entier) else 0) \
+            + (2 if prenom and (prenom in mots_planning or prenom == entier) else 0)
+        if score:
+            candidats.append((-score, 1 if s.get("alias") else 0, nom, prenom, s))
+    if not candidats:
+        return None
+    candidats.sort(key=lambda c: c[:4])
+    choisi = candidats[0][4]
+    return {k: choisi[k] for k in ("dossier", "matricule", "nom", "prenom", "intitule_emploi", "etablissement")} \
+        | {"deja_rattache_a": choisi.get("alias"), "autres_candidats": len(candidats) - 1}
+
+
+def a_rattacher(db) -> list:
+    actifs = salaries(db)
+    return [dict(r) | {"proposition": proposer(r["nom_planning"], actifs)}
+            for r in db.execute("SELECT * FROM noms_a_rattacher ORDER BY genre, nom_planning")]
+
+
+def _nom_planning(nom: str) -> str:
+    nom = " ".join((nom or "").split()).upper()
+    if not nom or len(nom) > 60:
+        raise ValueError("Un nom du planning, de 60 caractères au plus")
+    return nom
+
+
+def rattacher(db, nom: str, dossier: str, matricule: str, par: str, quand: dt.datetime) -> dict:
+    """Le bureau valide : ce nom du planning est ce salarié Silae."""
+    nom = _nom_planning(nom)
+    dossier, matricule = (dossier or "").strip().upper(), (matricule or "").strip()
+    s = db.execute("SELECT * FROM salaries WHERE dossier=? AND matricule=?", (dossier, matricule)).fetchone()
+    if not s:
+        raise ValueError(f"Aucun salarié Silae {dossier} {matricule} : relire Silae, ou vérifier le matricule")
+    attente = db.execute("SELECT genre FROM noms_a_rattacher WHERE nom_planning=?", (nom,)).fetchone()
+    with db:
+        db.execute("""INSERT INTO alias(nom_planning, dossier, matricule, ne_pointe_pas, valide_par, valide_le)
+                      VALUES (?,?,?,0,?,?)
+                      ON CONFLICT(nom_planning) DO UPDATE SET dossier=excluded.dossier,
+                        matricule=excluded.matricule, ne_pointe_pas=0, valide_par=excluded.valide_par,
+                        valide_le=excluded.valide_le""", (nom, dossier, matricule, par or "bureau", _iso(quand)))
+        connue = db.execute("SELECT 1 FROM personnes WHERE nom=?", (nom,)).fetchone()
+        if connue or attente:
+            db.execute("""INSERT INTO personnes(nom, equipe, actif, vu_le, dossier, matricule) VALUES (?,?,1,?,?,?)
+                          ON CONFLICT(nom) DO UPDATE SET actif=1, dossier=excluded.dossier,
+                            matricule=excluded.matricule""",
+                       (nom, attente["genre"] if attente else "atelier", _iso(quand), dossier, matricule))
+        # Sinon (alias préparé d'avance, par CSV) : la fiche naîtra au premier
+        # planning qui porte ce nom, avec la bonne équipe.
+        db.execute("DELETE FROM noms_a_rattacher WHERE nom_planning=?", (nom,))
+    return {"nom": nom, "dossier": dossier, "matricule": matricule,
+            "salarie": f"{s['prenom']} {s['nom']}", "intitule_emploi": s["intitule_emploi"]}
+
+
+def ne_pointe_pas(db, nom: str, par: str, quand: dt.datetime) -> dict:
+    """Le bureau tranche : ce nom ne désigne personne qui pointe (libellé
+    d'équipe, sous-traitant, ancien, salarié d'une autre BU). Il sort de « À
+    rattacher » ; s'il avait déjà une fiche, elle est désactivée (réversible :
+    la case « Actif »), jamais supprimée — ses pointages restent."""
+    nom = _nom_planning(nom)
+    with db:
+        db.execute("""INSERT INTO alias(nom_planning, dossier, matricule, ne_pointe_pas, valide_par, valide_le)
+                      VALUES (?, NULL, NULL, 1, ?, ?)
+                      ON CONFLICT(nom_planning) DO UPDATE SET dossier=NULL, matricule=NULL, ne_pointe_pas=1,
+                        valide_par=excluded.valide_par, valide_le=excluded.valide_le""",
+                   (nom, par or "bureau", _iso(quand)))
+        db.execute("UPDATE personnes SET actif=0 WHERE nom=?", (nom,))
+        db.execute("DELETE FROM noms_a_rattacher WHERE nom_planning=?", (nom,))
+    return {"nom": nom, "ne_pointe_pas": True}
+
+
+CSV_MAX = 200_000
+VRAI = ("1", "OUI", "VRAI", "X", "TRUE")
+
+
+def importer_alias_csv(db, texte: str, par: str, quand: dt.datetime) -> dict:
+    """Une table d'alias préparée à part : nom_planning;dossier;matricule;ne_pointe_pas.
+    Ligne par ligne : une ligne fausse est dite, et n'empêche pas les autres.
+    Le matricule est du texte (« 00768 ») : ouvert puis réenregistré par
+    Excel, il perd ses zéros — d'où « aucun salarié » plutôt qu'un mauvais
+    rattachement."""
+    if len(texte or "") > CSV_MAX:
+        raise ValueError("Fichier de plus de 200 Ko : ce n'est pas une table d'alias")
+    lignes = [l for l in (texte or "").lstrip("﻿").splitlines() if l.strip()]
+    if not lignes:
+        raise ValueError("Fichier vide")
+    entete = [c.strip().lower() for c in lignes[0].split(";")]
+    if entete[:4] != ["nom_planning", "dossier", "matricule", "ne_pointe_pas"]:
+        raise ValueError("Première ligne attendue : nom_planning;dossier;matricule;ne_pointe_pas")
+    appliques, erreurs = 0, []
+    for numero, ligne in enumerate(lignes[1:], start=2):
+        cols = [c.strip() for c in ligne.split(";")] + ["", "", "", ""]
+        nom, dossier, matricule, npp = cols[:4]
+        try:
+            if npp.upper() in VRAI:
+                ne_pointe_pas(db, nom, par, quand)
+            else:
+                rattacher(db, nom, dossier, matricule, par, quand)
+            appliques += 1
+        except ValueError as e:
+            erreurs.append({"ligne": numero, "nom": nom[:60], "motif": str(e)})
+    return {"appliques": appliques, "erreurs": erreurs}
 
 
 # ═══════════════════════ VALIDATION HEBDOMADAIRE ═══════════════════════

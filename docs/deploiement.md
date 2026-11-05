@@ -160,7 +160,7 @@ relié à l'application `rhi`. Noter son hôte
 | `RHI_CODE_BUREAU` | le code du bureau : différent du code terrain |
 | `RHI_COUT_HORAIRE` | le taux horaire moyen chargé, en €/h (en attendant les coûts par personne) |
 | `RHI_MARCHE_A` | destinataires de la synthèse marche en avant (adresses séparées par des virgules) — l'envoi du lundi est éteint depuis la revue du 01/10 : la marche en avant part chez un agent à part |
-| `RHI_PLANNINGS_URL` | liens de **téléchargement direct** des plannings ATE et POSE (séparés par des virgules ou des retours à la ligne) : RHI les relit tout seul ; vide = dépôt à la main |
+| `RHI_PLANNINGS_URL` | liens de **téléchargement direct** des plannings ATE et POSE, **séparés par des espaces ou des retours à la ligne** (pas de virgule : elle collerait deux liens en un). Un lien `https://graph.microsoft.com/…` est lu avec le jeton Graph (voir § 3 bis) ; les autres sans authentification. Vide = dépôt à la main |
 | `RHI_PLANNINGS_MINUTES` | tous les combien RHI relit ces liens (5 par défaut) |
 | `RHI_HEURES_JOUR` | la journée normale, du lundi au vendredi (`8,8,8,8,7` par défaut) : base des écarts du RHI |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | le serveur de courrier, mêmes noms que dans Ali Baba ; absent = rien ne part |
@@ -168,6 +168,76 @@ relié à l'application `rhi`. Noter son hôte
 
 `RHI_DONNEES` n'est pas à régler : `donnees/` est la valeur par défaut, et
 c'est là que le bucket est monté.
+
+## 3 bis. SharePoint (Graph) et Silae : un seul jeu d'identifiants Entra
+
+Depuis le 04/11/2026, RHI lit les plannings dans SharePoint par Microsoft
+Graph, et les salariés dans Silae par la route RHI de `mcp.vipplus.com`. Les
+deux acceptent un jeton Entra obtenu par *client credentials* avec **les
+mêmes identifiants** ; seul le scope change (`rhi/entra.py`, `banc-entra`) :
+
+| Variable | Valeur |
+|---|---|
+| `RHI_GRAPH_TENANT` | l'identifiant du tenant Entra du groupe |
+| `RHI_GRAPH_CLIENT_ID` | l'identifiant de l'application Entra de RHI |
+| `RHI_GRAPH_SECRET` | son secret client — **console Clever uniquement**, jamais dans une ligne de commande ni dans le dépôt (public) |
+| `RHI_SILAE_URL` | `https://mcp.vipplus.com/rhi/salaries?dossiers=VIPPLUS,MELMAR,REGA` — absent = pas de Silae (voir plus bas) |
+
+| Usage | Scope demandé | Ce que l'app Entra doit avoir |
+|---|---|---|
+| Plannings SharePoint | `https://graph.microsoft.com/.default` | permission d'application Graph **`Sites.Selected`** (consentement admin), puis le droit **lecture** accordé sur le seul site des plannings |
+| Salariés Silae | `https://mcp.vipplus.com/mcp/.default` | le rôle d'application **`RHI.Salaries.Read`** de l'app « Silae MCP – API » (consentement admin) |
+
+Un jeton est gardé en mémoire, par scope, jusqu'à cinq minutes avant son
+expiration. Jeton, secret et liens ne sont jamais écrits : ni en base, ni à
+l'écran, ni au journal.
+
+**Les liens Graph** de `RHI_PLANNINGS_URL` ont la forme :
+
+    https://graph.microsoft.com/v1.0/drives/{driveId}/items/{itemId}/content
+
+`{driveId}` est la bibliothèque de documents du site, `{itemId}` le fichier.
+Ils ne changent pas quand le fichier est modifié ou renommé, mais changent
+s'il est **supprimé puis redéposé** : le bureau voit alors « Graph : fichier
+introuvable (identifiant changé ?) ». Les autres statuts : « Graph :
+identifiants refusés » (401 : secret faux ou expiré), « Graph : pas de droit
+lecture sur ce site (Sites.Selected) » (403), et, si le lien est posé sans les
+trois variables `RHI_GRAPH_*`, un statut qui le dit — les autres fichiers
+passent quand même. Une erreur ne touche jamais au planning en place.
+
+**Silae** est relu une fois par heure et à la demande (onglet Personnes,
+*Relire Silae*). Une lecture ratée ne vide jamais la table des salariés.
+Silae ne crée aucune personne : chaque nom du planning se **rattache** à un
+salarié au bureau (« À rattacher »), et en attendant il pointe normalement.
+**Sans `RHI_SILAE_URL`** (Alfa, qui n'est dans aucun dossier Silae lu par
+RHI), l'import des plannings fait exactement comme avant.
+
+Contrôle, avec le code bureau :
+
+    curl -s -H "X-RHI-Code: <code bureau>" https://<app>.cleverapps.io/api/sante/detail
+
+```json
+"silae": {"configure": true, "jeton_ok": true, "salaries": 64, "a_rattacher": 3},
+"graph_plannings": {"configure": true, "jeton_ok": true}
+```
+
+`jeton_ok: false` avec `configure: true` : le secret est faux ou expiré, ou le
+consentement admin manque. `graph_plannings.configure` n'est vrai que si les
+variables sont posées **et** qu'au moins un lien de `RHI_PLANNINGS_URL` est un
+lien Graph.
+
+### Renouveler le secret (24 mois au plus)
+
+Le secret Entra expire sans prévenir et coupe à la fois les plannings et
+Silae. **Noter l'échéance dans un calendrier dès sa création.** Pour le
+renouveler :
+
+1. Entra → *App registrations* → l'application de RHI → *Certificates &
+   secrets* → **New client secret** (garder l'ancien pour l'instant) ;
+2. console Clever → l'application → variables : remplacer `RHI_GRAPH_SECRET`,
+   puis **redémarrer** l'application (le jeton gardé en mémoire repart de zéro) ;
+3. `/api/sante/detail` : `jeton_ok` vrai pour `silae` et `graph_plannings` ;
+4. alors seulement, supprimer l'ancien secret dans Entra.
 
 ## 4. Vérifier — un `git push` ne prouve rien
 
@@ -210,9 +280,10 @@ Puis `clever activity --app <id>` (le déploiement est-il OK ?) et
 1. Bureau → **Plannings** : déposer le planning ATE et le planning POSE SER.
 2. Bureau → **Plannings** : *Relire les chantiers InterFast*, puis *Relire
    les montants vendus*.
-3. Bureau → **Personnes** : *Relire les comptes InterFast* ; trancher les
-   prénoms ambigus ; saisir les coûts horaires connus ; décocher ceux qui ne
-   pointent pas (sous-traitants, libellés d'équipe).
+3. Bureau → **Personnes** : *Relire Silae*, puis dans **À rattacher**,
+   rattacher chaque nom du planning à son salarié (ou *Ne pointe pas* :
+   libellés d'équipe, sous-traitants, anciens) ; *Relire les comptes
+   InterFast* ; trancher les prénoms ambigus ; saisir les coûts horaires connus.
 4. Chaque tablette et chaque téléphone : ouvrir l'adresse, choisir
    *atelier* ou *pose*, entrer le code une fois. Sur la tablette, « Ajouter à
    l'écran d'accueil » : elle s'ouvre alors comme une application, même sans
