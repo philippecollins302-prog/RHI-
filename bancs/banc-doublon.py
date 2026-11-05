@@ -36,7 +36,7 @@ CONFIRMEE = ("✅ **Intervention planifiée avec succès** **Référence:** 410 
              "**Chantier:** Escalier Essai **Date:** 27/10/2026 **Techniciens:** Fabien Fictif, "
              "Lucien Inventé **Description:** RHI · CH00066 · pointage")
 DESCRIPTION = "RHI · CH00066 · pointage"
-CASE = {"ch": "CH00066", "jour": "2026-10-27", "client": "BAILLEUR FICTIF", "chantier": "Escalier Essai",
+CASE = {"ch": "CH00066", "jour": "2026-10-27", "client": "BAILLEUR FICTIF", "chantier": "Escalier Essai", "chantier_id": 109482,
         "heure": "08:00", "duree": "2h", "techniciens": ["Fabien Fictif", "Lucien Inventé"],
         "description": DESCRIPTION}
 REFERENCES = {2097420: 409, 2097424: 410, 2097430: 411}
@@ -54,12 +54,36 @@ def planning(*items):
     return json.dumps({"kind": "planning_events", "items": list(items)}, ensure_ascii=False, separators=(",", ":"))
 
 
+def evt_rest(id_, ref, start, chantier=109482, title=DESCRIPTION):
+    """Un élément de GET /v1/events, forme relevée le 05/11/2026."""
+    return {"id": str(id_), "category": "intervention", "title": title, "reference": ref, "start": start,
+            "worksite": {"id": chantier, "title": "Escalier Essai"} if chantier else None, "users": []}
+
+
 class FauxMCP:
-    def __init__(self, planning_=VIDE, confirmee=CONFIRMEE, intervention_ok=True):
+    """MCP (POST /mcp/http) et REST (GET /v1/events). `rest` : une liste
+    d'événements servie page par page, ou un statut HTTP, ou « illisible ».
+    Par défaut 404 : l'anti-doublon passe alors par consulter_planning."""
+
+    def __init__(self, planning_=VIDE, confirmee=CONFIRMEE, intervention_ok=True, rest=404):
         self.planning, self.confirmee, self.intervention_ok = planning_, confirmee, intervention_ok
-        self.appels = []
+        self.rest, self.rest_vus, self.appels = rest, [], []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
+        if req.method == "GET" and req.url.path == "/v1/events":
+            q = dict(req.url.params)
+            self.rest_vus.append(q)
+            verif(req.headers.get("X-API-KEY") == os.environ["INTERFAST_VIP"], "REST : clé dans l'en-tête X-API-KEY")
+            verif(os.environ["INTERFAST_VIP"] not in str(req.url), "REST : la clé n'est jamais dans l'adresse")
+            if isinstance(self.rest, int):
+                return httpx.Response(self.rest, json={"message": "refus"})
+            if self.rest == "illisible":
+                return httpx.Response(200, text="<html>Connexion</html>")
+            its = [e for e in self.rest if (not q.get("name") or q["name"] == e["reference"])
+                   and (not q.get("worksites") or e["worksite"] and str(e["worksite"]["id"]) == q["worksites"])]
+            n, page = int(q["count"]), int(q["page"])
+            return httpx.Response(200, json={"count": len(its), "items": its[page * n:(page + 1) * n],
+                                             "pageable": {"page": page, "itemsPerPage": n}})
         corps = json.loads(req.content)
         nom, args = corps["params"]["name"], corps["params"]["arguments"]
         self.appels.append((nom, args))
@@ -74,6 +98,8 @@ class FauxMCP:
         elif nom == "confirmer_action":
             verif(args == {"confirmation": True, "action_id": ACTION}, "confirmation avec l'action_id")
             texte = self.confirmee
+            if isinstance(self.rest, list):   # créée : elle apparaît dans InterFast
+                self.rest.append(evt_rest(2097424, "IN00410", "2026-10-27T07:00:00.000Z"))
         elif nom == "appeler_api" and args["chemin"].startswith("/v1/intervention/"):
             n = int(args["chemin"].rsplit("/", 1)[1])
             if not self.intervention_ok:
@@ -102,7 +128,9 @@ def echoue(faux, attendue):
         verif(False, f"{attendue.__name__} attendue, reçu {type(e).__name__} : {e}")
 
 
-CREER = ["consulter_planning", "planifier_intervention", "confirmer_action"]
+# REST refusée : recherche par consulter_planning, création, puis l'id
+# interne cherché de nouveau (par consulter_planning aussi).
+CREER = ["consulter_planning", "planifier_intervention", "confirmer_action", "consulter_planning"]
 
 # ── 1. Aucune case existante : création, référence « 410 » → IN00410 ──
 f = FauxMCP()
@@ -169,5 +197,90 @@ try:
     verif(False, "sans technicien : erreur attendue")
 except interfast.InterFastIndisponible:
     verif(f.noms() == [], "sans technicien : ni recherche ni création")
+
+# ── 6. Par l'API REST d'abord (GET /v1/events), paginée ──
+autres = [evt_rest(3000000 + i, f"IN{i:05d}", "2026-10-27T05:00:00.000Z", title=f"Dépannage {i}") for i in range(50)]
+f = FauxMCP(rest=autres + [evt_rest(2097424, "IN00410", "2026-10-27T07:00:00.000Z")])
+r = poser(f)
+verif(r == "IN00410" and r.num == 2097424, f"REST, page 2 : la case est reprise avec son id ({r}, {getattr(r, 'num', None)})")
+verif(f.appels == [], f"REST qui répond : aucun appel MCP, rien n'est créé ni relu ({f.noms()})")
+verif([q["page"] for q in f.rest_vus] == ["0", "1"] and all(q["count"] == "50" for q in f.rest_vus),
+      f"deux pages de 50 : {[q['page'] for q in f.rest_vus]}")
+q = f.rest_vus[0]
+verif((q["start"], q["end"], q["worksites"], q["archived"], q["meeting"])
+      == ("2026-10-26T00:00:00", "2026-10-28T23:59:59", "109482", "false", "false"),
+      f"filtrée sur le jour (±1 pour les fuseaux) et le chantier : {q}")
+# Création par la REST : l'id est retrouvé aussitôt après.
+f = FauxMCP(rest=[evt_rest(2097430, "IN00411", "2026-10-28T07:00:00.000Z")])
+r = poser(f)
+verif(r == "IN00410" and r.num == 2097424, f"créée, puis son id retrouvé : {r} {getattr(r, 'num', None)}")
+verif(f.noms() == ["planifier_intervention", "confirmer_action"], f"REST : pas de consulter_planning ({f.noms()})")
+# Deux par la REST : à vérifier, références lues dans la réponse.
+f = FauxMCP(rest=[evt_rest(2097424, "IN00410", "2026-10-27T07:00:00.000Z"),
+                  evt_rest(2097420, "IN00409", "2026-10-27T07:00:00.000Z")])
+e = echoue(f, interfast.Doublons)
+verif(e and "IN00409" in str(e) and "IN00410" in str(e) and f.appels == [], f"REST, doublons : à vérifier ({e})")
+# REST en 404, 401, 403 ou illisible : repli sur consulter_planning.
+for refus in (404, 401, 403, "illisible"):
+    f = FauxMCP(planning(evenement(2097424, "2026-10-27T07:00:00.000Z")), rest=refus)
+    r = poser(f)
+    verif(r == "IN00410" and f.rest_vus and f.noms()[0] == "consulter_planning"
+          and "planifier_intervention" not in f.noms(), f"REST {refus} : repli MCP, reprise ({f.noms()})")
+# REST en panne (429, 5xx) : ni repli ni création.
+for panne in (429, 500):
+    f = FauxMCP(rest=panne)
+    e = echoue(f, interfast.InterFastIndisponible)
+    verif(f.appels == [] and "rien n'est créé" in str(e), f"REST {panne} : rien n'est créé, sans repli ({e})")
+# REST en 404 et repli tronqué : rien n'est créé.
+f = FauxMCP(planning(evenement(2097424, "2026-10-27T07:00:00.000Z")) + "\n… (tronqué)", rest=404)
+e = echoue(f, interfast.InterFastIndisponible)
+verif(f.noms() == ["consulter_planning"] and "rien n'est créé" in str(e), f"REST 404 + repli tronqué : rien ({e})")
+
+# ── 7. Une référence portée par plusieurs interventions ──
+# 05/11/2026 : IN00410 = notre case CH00066 du 27/10 ET une visite de 2022.
+HOMONYMES = [evt_rest(2097424, "IN00410", "2026-10-27T07:00:00.000Z"),
+             evt_rest(1097612, "IN00410", "2022-05-23T06:00:00.000Z", chantier=None, title="1ERE VISITE 2022")]
+f = FauxMCP(rest=list(HOMONYMES))
+num = asyncio.run(interfast.retrouver_reference("IN00410", "2026-10-27", 109482, "Fabien Fictif", httpx.MockTransport(f)))
+verif(num == 2097424, f"IN00410 : la case du jour et du chantier est retenue, pas la visite de 2022 ({num})")
+verif(f.rest_vus[0]["name"] == "IN00410", "cherchée par référence (filtre name)")
+for jour, chantier in (("2026-10-28", 109482), ("2026-10-27", 999)):
+    try:
+        asyncio.run(interfast.retrouver_reference("in00410", jour, chantier, "Fabien Fictif",
+                                                  httpx.MockTransport(FauxMCP(rest=list(HOMONYMES)))))
+        verif(False, f"{jour} / chantier {chantier} : refus attendu")
+    except interfast.ReferenceAmbigue as e:
+        verif("2097424" in str(e) and "1097612" in str(e) and "2022-05-23" in str(e),
+              f"aucune au jour et au chantier : refus avec la liste ({e})")
+f = FauxMCP(rest=list(HOMONYMES) + [evt_rest(2097499, "IN00410", "2026-10-27T09:00:00.000Z")])
+try:
+    asyncio.run(interfast.retrouver_reference("IN00410", "2026-10-27", 109482, "Fabien Fictif", httpx.MockTransport(f)))
+    verif(False, "deux le même jour sur le même chantier : refus attendu")
+except interfast.ReferenceAmbigue as e:
+    verif("2097499" in str(e), f"deux au jour et au chantier : refus avec la liste ({e})")
+# REST refusée : le planning du jour, chaque id relu par reference_de.
+f = FauxMCP(planning(evenement(2097424, "2026-10-27T07:00:00.000Z"), evenement(2097430, "2026-10-27T07:00:00.000Z",
+                                                                                "Autre")), rest=404)
+num = asyncio.run(interfast.retrouver_reference("IN00410", "2026-10-27", 109482, "Fabien Fictif", httpx.MockTransport(f)))
+verif(num == 2097424, f"REST 404 : retrouvée par le planning du jour ({num}, {f.noms()})")
+
+# ── 8. L'id d'une case posée sans lui (l'essai CH00066, IN00410) ──
+f = FauxMCP(rest=list(HOMONYMES) + [evt_rest(2097431, "IN00412", "2026-10-27T07:00:00.000Z",
+                                             title="RHI · CH00067 · pointage")])
+num = asyncio.run(interfast.num_de_case("CH00066", "2026-10-27", "IN00410", 109482, "Fabien Fictif",
+                                        httpx.MockTransport(f)))
+verif(num == 2097424, f"retrouvé par jour + chantier + titre : {num}")
+f = FauxMCP(rest=[evt_rest(2097424, "IN00410", "2026-10-27T07:00:00.000Z"),
+                  evt_rest(2097425, "IN00415", "2026-10-27T08:00:00.000Z")])
+num = asyncio.run(interfast.num_de_case("CH00066", "2026-10-27", "IN00410", 109482, "Fabien Fictif",
+                                        httpx.MockTransport(f)))
+verif(num == 2097424, f"deux cases RHI du CH ce jour-là : la référence départage ({num})")
+f = FauxMCP(planning(evenement(2097424, "2026-10-27T07:00:00.000Z"), evenement(2097420, "2026-10-27T07:00:00.000Z")),
+            rest=404)
+num = asyncio.run(interfast.num_de_case("CH00066", "2026-10-27", "IN00410", 109482, "Fabien Fictif",
+                                        httpx.MockTransport(f)))
+verif(num is None, "par le MCP, deux candidates sans référence : on ne devine pas")
+
+verif("cle-de-banc-doublon" not in journal.getvalue(), "la clé n'est dans aucun journal")
 
 fin("banc-doublon")

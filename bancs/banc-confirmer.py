@@ -45,6 +45,8 @@ class FauxMCP:
         self.recap, self.attendu, self.refus, self.appels = recap, attendu, refus, []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":   # REST /v1/events refusée : l'anti-doublon passe par le MCP (banc-doublon)
+            return httpx.Response(404, json={"message": "Not found"})
         verif(CLE not in req.content.decode(), "la clé ne part jamais dans le corps")
         corps = json.loads(req.content)
         nom, args = corps["params"]["name"], corps["params"]["arguments"]

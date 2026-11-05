@@ -281,10 +281,26 @@ reponses = {"planifier_intervention": RECAP,
             "confirmer_action": "✅ Intervention IN00321 planifiée le 28/09/2026."}
 
 
-recherches = []   # consulter_planning : l'anti-doublon, avant chaque création (banc-doublon)
+recherches = []   # consulter_planning : le repli de l'anti-doublon (banc-doublon)
+rest_vus = []     # GET /v1/events : l'anti-doublon et la recherche d'id, par la REST
+evenements = []   # ce que le faux InterFast rend sur /v1/events (forme du 05/11/2026)
+
+
+def evenement(id_, ref, start, chantier, titre):
+    return {"id": str(id_), "category": "intervention", "title": titre, "reference": ref, "start": start,
+            "worksite": {"id": chantier, "title": "x"} if chantier else None}
 
 
 def mcp_ecriture(req: httpx.Request) -> httpx.Response:
+    if req.method == "GET" and req.url.path == "/v1/events":
+        q = dict(req.url.params)
+        rest_vus.append(q)
+        if reponses.get("rest") == 404:
+            return httpx.Response(404, json={"message": "Not found"})
+        its = [e for e in evenements if (not q.get("name") or q["name"] == e["reference"])
+               and (not q.get("worksites") or e["worksite"] and str(e["worksite"]["id"]) == q["worksites"])]
+        n, page = int(q["count"]), int(q["page"])
+        return httpx.Response(200, json={"count": len(its), "items": its[page * n:(page + 1) * n]})
     corps = json.loads(req.content)
     nom, args = corps["params"]["name"], corps["params"]["arguments"]
     if nom == "consulter_planning":
@@ -315,8 +331,9 @@ try:
     os.environ.pop("RHI_ECRITURE_ESSAI")
     interfast.ECRITURE = True
     verif([n for n, _ in ecrits] == ["planifier_intervention", "confirmer_action"], f"deux temps : {ecrits}")
-    verif(recherches == [{"semaine": "2026-09-28", "technicien": "Paul Martin"}],
-          f"avant de créer, la case est cherchée dans InterFast : {recherches}")
+    verif(rest_vus and rest_vus[0]["worksites"] == "777" and rest_vus[0]["start"] == "2026-09-27T00:00:00"
+          and rest_vus[0]["end"] == "2026-09-29T23:59:59" and recherches == [],
+          f"avant de créer, la case est cherchée par la REST, sur son jour et son chantier : {rest_vus[:1]}")
     plan = ecrits[0][1]
     verif(plan == {"client": "BAILLEUR SUD", "chantier": "Résidence des Pins", "date": "2026-09-28",
                    "heure": "07:00", "duree": "5h", "techniciens": ["Paul Martin", "Jean Durand", "Zoe Aubert"],
@@ -364,6 +381,19 @@ try:
     verif(r["illisibles"] == ["IN00321"] and r["a_terminer"] == [], f"coupée : on ne conclut pas : {r}")
     lecture = vraie
     c.post("/api/interfast/suivi?semaine=2026-09-28")
+    # Une case posée sans son id (l'essai CH00066) : la relecture le retrouve
+    # par jour + chantier + titre, malgré une homonyme de 2022 (même IN…).
+    with base.connexion(appli.app.state.chemin_base) as b2:
+        b2.execute("UPDATE cases_interfast SET num=NULL WHERE ch='CH00901'")
+    evenements[:] = [evenement(555001, "IN00321", "2026-09-28T05:00:00.000Z", 777, "RHI · CH00901 · pointage"),
+                     evenement(1097612, "IN00321", "2022-05-23T06:00:00.000Z", None, "VISITE 2022")]
+    ecrits.clear()
+    c.post("/api/interfast/suivi?semaine=2026-09-28")
+    with base.connexion(appli.app.state.chemin_base) as b2:
+        num = b2.execute("SELECT num FROM cases_interfast WHERE ch='CH00901'").fetchone()[0]
+    verif(num == 555001 and [a["chemin"] for n, a in ecrits] == ["/v1/interventions/555001/timesheets"],
+          f"id retrouvé par jour + chantier + titre, sans passer par les journées : {num} {ecrits}")
+    evenements.clear()
     verif(interfast._json_de('📥 **GET**\n```json\n[{"a": 1}]\n```') == [{"a": 1}], "une liste se lit en liste")
     # Un refus d'InterFast s'arrête au premier temps, sans confirmer.
     reponses["planifier_intervention"] = "❌ Chantier introuvable pour ce client."
@@ -405,8 +435,20 @@ try:
     verif(r.status_code == 200 and "la case existe peut-être" in r.json()["echecs"][0]["erreur"],
           f"délai dépassé à la confirmation : dit, jamais un 500 : {r.status_code} {r.text[:200]}")
     verif(etat("CH00902|2026-09-29")["etat"] == "à vérifier", "et marquée à vérifier, pas renvoyable")
-    # Elle existe : on garde sa vraie référence.
+    # Elle existe : on garde sa vraie référence — et l'id de LA bonne
+    # intervention, la référence n'étant pas unique (05/11/2026).
+    evenements[:] = [evenement(401001, "IN00401", "2026-09-29T06:00:00.000Z", 778, "RHI · CH00902 · pointage"),
+                     evenement(1097612, "IN00401", "2022-05-23T06:00:00.000Z", None, "VISITE 2022"),
+                     evenement(1097613, "IN00499", "2022-05-24T06:00:00.000Z", None, "VISITE 2022")]
+    r = tranche("IN00499")
+    verif(r.status_code == 409 and "1097613" in r.json()["detail"] and "2022-05-24" in r.json()["detail"],
+          f"une référence d'un autre jour : refusée, avec la liste ({r.text})")
+    verif(etat("CH00902|2026-09-29")["etat"] == "à vérifier", "refusée : la case reste à vérifier")
     verif(tranche("in00401").json()["ref"] == "IN00401", "« elle existe » : sa référence est gardée")
+    with base.connexion(appli.app.state.chemin_base) as b2:
+        num = b2.execute("SELECT num FROM cases_interfast WHERE ch='CH00902'").fetchone()[0]
+    verif(num == 401001, f"IN00401 porté aussi par une visite de 2022 : l'id de la case du jour est gardé ({num})")
+    evenements.clear()
     verif(etat("CH00902|2026-09-29")["ref"] == "IN00401" and etat("CH00902|2026-09-29")["etat"] == "posée", "posée")
     verif(tranche("IN00402").status_code == 409, "une vraie référence ne se réécrit pas")
     # « Aucune action » à la confirmation (un 502 rejoué après création) : incertain aussi.
@@ -422,24 +464,28 @@ try:
     # « Elle n'existe pas : la renvoyer »… alors qu'elle existe (05/11/2026) :
     # la case est retrouvée dans InterFast et reprise, rien n'est recréé.
     c.post("/api/interfast/cases/reference", json={"ch": "CH00903", "jour": "2026-10-06", "ref": ""})
-    reponses["consulter_planning"] = json.dumps({"kind": "planning_events", "items": [
-        {"id": "2097424", "title": "RHI · CH00903 · pointage", "start": "2026-10-06T05:00:00.000Z"}]})
+    evenements[:] = [evenement(2097424, "IN00410", "2026-10-06T05:00:00.000Z", 779, "RHI · CH00903 · pointage")]
     ecrits.clear()
     r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
-    verif(r.json()["posees"] == [{"id": "CH00903|2026-10-06", "ref": "IN00007"}], f"renvoyée : reprise ({r.text})")
-    verif([a.get("chemin") for _, a in ecrits] == ["/v1/intervention/2097424"],
-          f"renvoyée : sa référence est relue, rien n'est créé ({ecrits})")
+    verif(r.json()["posees"] == [{"id": "CH00903|2026-10-06", "ref": "IN00410"}], f"renvoyée : reprise ({r.text})")
+    verif(ecrits == [], f"renvoyée : la REST donne référence et id, rien n'est créé ni relu ({ecrits})")
+    with base.connexion(appli.app.state.chemin_base) as b4:
+        verif(b4.execute("SELECT num FROM cases_interfast WHERE ch='CH00903'").fetchone()[0] == 2097424,
+              "reprise : l'id interne est gardé à côté de la référence")
+    evenements.clear()
     # Recherche impossible : rien n'est créé, la case reste prête.
     with base.connexion(appli.app.state.chemin_base) as b4:
         b4.execute("DELETE FROM cases_interfast WHERE ch='CH00903'")
         b4.execute("UPDATE pointages SET interfast=NULL WHERE ch='CH00903'")
-    reponses["consulter_planning"] = "Technicien introuvable"
+    reponses["rest"] = 404                                # REST refusée…
+    reponses["consulter_planning"] = "Technicien introuvable"  # …et repli illisible
     ecrits.clear()
     r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
     verif(ecrits == [] and "rien n'est créé" in r.json()["echecs"][0]["erreur"], f"recherche ratée : rien ({r.text})")
     verif({x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-10-05").json()["cases"]}
           ["CH00903|2026-10-06"]["etat"] == "prête", "recherche ratée : la case reste prête")
     reponses.pop("consulter_planning")
+    reponses.pop("rest")
 
     # Un seul envoi à la fois.
     class Pris:

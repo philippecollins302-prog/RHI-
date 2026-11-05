@@ -772,8 +772,8 @@ async def api_poser_cases(e: Envoi, c=Depends(db)):
             except interfast.InterFastIndisponible as err:
                 echecs.append({"id": case["id"], "erreur": str(err)})
                 continue
-            base.case_posee(c, case, ref)
-            posees.append({"id": case["id"], "ref": ref})
+            base.case_posee(c, case, str(ref), getattr(ref, "num", None))
+            posees.append({"id": case["id"], "ref": str(ref)})
     return {"posees": posees, "echecs": echecs}
 
 
@@ -793,14 +793,27 @@ def api_completer_case(k: CaseDuBureau, c=Depends(db)):
 
 
 @app.post("/api/interfast/cases/reference", dependencies=[Depends(acces_bureau)])
-def api_reference_case(k: CaseDuBureau, c=Depends(db)):
-    """Trancher une case À VÉRIFIER : sa vraie référence, ou « pas créée »."""
+async def api_reference_case(k: CaseDuBureau, c=Depends(db)):
+    """Trancher une case À VÉRIFIER : sa vraie référence, ou « pas créée ».
+
+    Une référence InterFast peut désigner plusieurs interventions (IN00410 :
+    notre case du 27/10/2026 ET une visite de 2022) : on retient celle du
+    jour et du chantier de la case, et son id interne, ou on refuse avec la
+    liste. InterFast injoignable : 503, rien n'est tranché."""
     try:
-        return base.reference_case(c, k.ch, k.jour, k.ref)
+        ref = base.ref_a_trancher(c, k.ch, k.jour, k.ref)
+        num = None
+        if ref:
+            ctx = base.contexte_case(c, k.ch, k.jour)
+            num = await interfast.retrouver_reference(ref, k.jour, ctx["chantier_id"], ctx["technicien"],
+                                                      getattr(app.state, "transport_interfast", None))
+        return base.reference_case(c, k.ch, k.jour, ref, num)
     except KeyError as err:
         raise HTTPException(404, str(err))
-    except ValueError as err:
+    except ValueError as err:   # ReferenceAmbigue comprise
         raise HTTPException(409, str(err))
+    except interfast.InterFastIndisponible as err:
+        raise HTTPException(503, f"Référence non vérifiée dans InterFast ({err}) : rien n'est tranché")
 
 
 @app.post("/api/interfast/suivi", dependencies=[Depends(acces_bureau)])
@@ -820,6 +833,16 @@ async def api_suivi(semaine: str, c=Depends(db)):
     try:
         for case in base.cases_posees(c, _lundi(semaine)):
             num, coupee = case["num"], False
+            if not num:
+                # Une case posée sans son id (l'essai CH00066, avant le
+                # 05/11/2026) : par jour + chantier + titre d'abord, la
+                # référence seule n'étant pas unique ; sinon, comme avant,
+                # par les heures du jour de ses techniciens.
+                try:
+                    num = await interfast.num_de_case(case["ch"], case["jour"].isoformat(), case["ref"],
+                                                      case["chantier_id"], case["technicien"], t)
+                except interfast.InterFastIndisponible:
+                    num = None
             for uid in ([] if num else case["users"]):
                 cle = (uid, case["jour"])
                 if cle not in jours:
@@ -840,7 +863,7 @@ async def api_suivi(semaine: str, c=Depends(db)):
                 illisibles.append(case["ref"])
                 continue
             entrees = await interfast.heures_intervention(num, t) if num else []
-            base.enregistrer_suivi(c, case["ref"], num, entrees)
+            base.enregistrer_suivi(c, case["ch"], case["jour"].isoformat(), case["ref"], num, entrees)
             (terminees if entrees else a_terminer).append(case["ref"])
     except interfast.InterFastIndisponible as err:
         raise HTTPException(503, str(err))
