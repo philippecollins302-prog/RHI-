@@ -48,6 +48,10 @@ class FauxMCP:
         verif(CLE not in req.content.decode(), "la clé ne part jamais dans le corps")
         corps = json.loads(req.content)
         nom, args = corps["params"]["name"], corps["params"]["arguments"]
+        if nom == "consulter_planning":   # l'anti-doublon : rien d'existant (banc-doublon)
+            texte = "📅 **Planning**\n\nAucun événement planifié sur cette période."
+            res = {"content": [{"type": "text", "text": texte}]}
+            return httpx.Response(200, text="data: " + json.dumps({"result": res}) + "\n\n")
         self.appels.append((nom, args))
         if nom == "planifier_intervention":
             texte = self.recap

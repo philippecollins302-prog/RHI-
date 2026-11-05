@@ -281,9 +281,16 @@ reponses = {"planifier_intervention": RECAP,
             "confirmer_action": "✅ Intervention IN00321 planifiée le 28/09/2026."}
 
 
+recherches = []   # consulter_planning : l'anti-doublon, avant chaque création (banc-doublon)
+
+
 def mcp_ecriture(req: httpx.Request) -> httpx.Response:
     corps = json.loads(req.content)
     nom, args = corps["params"]["name"], corps["params"]["arguments"]
+    if nom == "consulter_planning":
+        recherches.append(args)
+        texte = reponses.get("consulter_planning", "📅 **Planning**\n\nAucun événement planifié sur cette période.")
+        return httpx.Response(200, text="data: " + json.dumps({"result": {"content": [{"type": "text", "text": texte}]}}))
     ecrits.append((nom, args))
     if nom == "appeler_api":
         texte = lecture(args["chemin"])
@@ -308,6 +315,8 @@ try:
     os.environ.pop("RHI_ECRITURE_ESSAI")
     interfast.ECRITURE = True
     verif([n for n, _ in ecrits] == ["planifier_intervention", "confirmer_action"], f"deux temps : {ecrits}")
+    verif(recherches == [{"semaine": "2026-09-28", "technicien": "Paul Martin"}],
+          f"avant de créer, la case est cherchée dans InterFast : {recherches}")
     plan = ecrits[0][1]
     verif(plan == {"client": "BAILLEUR SUD", "chantier": "Résidence des Pins", "date": "2026-09-28",
                    "heure": "07:00", "duree": "5h", "techniciens": ["Paul Martin", "Jean Durand", "Zoe Aubert"],
@@ -410,6 +419,27 @@ try:
         b3.execute("INSERT INTO validations VALUES ('ZOE', '2026-10-05', 'Alexis', '2026-10-06')")
     r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
     verif("peut-être" in r.json()["echecs"][0]["erreur"], f"« Aucune action » après confirmation : incertain : {r.text}")
+    # « Elle n'existe pas : la renvoyer »… alors qu'elle existe (05/11/2026) :
+    # la case est retrouvée dans InterFast et reprise, rien n'est recréé.
+    c.post("/api/interfast/cases/reference", json={"ch": "CH00903", "jour": "2026-10-06", "ref": ""})
+    reponses["consulter_planning"] = json.dumps({"kind": "planning_events", "items": [
+        {"id": "2097424", "title": "RHI · CH00903 · pointage", "start": "2026-10-06T05:00:00.000Z"}]})
+    ecrits.clear()
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
+    verif(r.json()["posees"] == [{"id": "CH00903|2026-10-06", "ref": "IN00007"}], f"renvoyée : reprise ({r.text})")
+    verif([a.get("chemin") for _, a in ecrits] == ["/v1/intervention/2097424"],
+          f"renvoyée : sa référence est relue, rien n'est créé ({ecrits})")
+    # Recherche impossible : rien n'est créé, la case reste prête.
+    with base.connexion(appli.app.state.chemin_base) as b4:
+        b4.execute("DELETE FROM cases_interfast WHERE ch='CH00903'")
+        b4.execute("UPDATE pointages SET interfast=NULL WHERE ch='CH00903'")
+    reponses["consulter_planning"] = "Technicien introuvable"
+    ecrits.clear()
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-10-05", "cases": ["CH00903|2026-10-06"]})
+    verif(ecrits == [] and "rien n'est créé" in r.json()["echecs"][0]["erreur"], f"recherche ratée : rien ({r.text})")
+    verif({x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-10-05").json()["cases"]}
+          ["CH00903|2026-10-06"]["etat"] == "prête", "recherche ratée : la case reste prête")
+    reponses.pop("consulter_planning")
 
     # Un seul envoi à la fois.
     class Pris:

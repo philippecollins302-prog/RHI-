@@ -141,6 +141,29 @@ InterFast* :
   Chaque étape est journalisée (`rhi.interfast` : CH, jour, « action_id
   trouvé/absent », « référence IN… », « réponse sans référence », « refus »),
   sans la clé ni le client ni les techniciens (`banc-confirmer`).
+  **La référence rendue a changé le même jour** : `confirmer_action` répond
+  « ✅ **Intervention planifiée avec succès** **Référence:** 410 … », un
+  simple numéro, plus « IN00410 ». RHI lit les deux (gras, espaces et
+  deux-points variables) et garde `IN{n:05d}`, le format de `reference_de()`.
+  Un « ✅ … avec succès » sans numéro reste « à vérifier ». Faute de le lire,
+  l'essai CH00066 est passé « à vérifier », le bureau l'a renvoyé, et
+  InterFast a reçu **deux** interventions identiques (409 et 410).
+  **Anti-doublon, avant toute création** (premier envoi comme « la
+  renvoyer ») : RHI cherche la case dans le planning InterFast
+  (`consulter_planning`, technicien = le premier de la case). Il ne garde
+  que les interventions dont le titre est exactement la description posée
+  par RHI (« RHI · CH… · … ») et qui commencent, à Paris, le jour de la
+  case. Une trouvée : rien n'est créé, sa référence est reprise
+  (`reference_de`) et la case est posée (journal : « case existante
+  reprise »). Plusieurs : rien n'est créé, la case est « à vérifier » avec
+  leurs références, pour supprimer les doublons dans InterFast. Aucune :
+  création comme avant. **Recherche impossible** (réseau, réponse coupée ou
+  illisible, aucun technicien) : rien n'est créé, la case reste prête —
+  on échoue fermé. `consulter_planning` reçoit la **date** de la case et
+  pas la semaine ISO : relevé le 05/11/2026, « 2027-W01 » y rend la semaine
+  du 28/12 au 03/01, alors que « 2027-01-05 » rend bien le lundi 4 au
+  dimanche 10. Une semaine vide répond par une phrase (« Aucun événement
+  planifié sur cette période. »), pas par du JSON (`banc-doublon`).
   Une fois la confirmation partie, **tout ce qui n'est pas « IN… créée »
   est incertain** : pas de référence, « Aucune action » (un 502 rejoué
   après création répond ainsi), un délai dépassé. La case est alors

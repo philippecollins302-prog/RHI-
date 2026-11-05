@@ -21,6 +21,7 @@ n'est pas décidée (voir docs/interfast.md). Une écriture ratée dans
 InterFast fausse un point d'affaire en silence ; un export, lui, se relit.
 """
 import asyncio
+import datetime as dt
 import json
 import logging
 import os
@@ -407,7 +408,11 @@ class CaseSansReference(InterFastIndisponible):
     On ne la renvoie pas (doublon) ; le bureau vérifie dans InterFast."""
 
 
-_REF = re.compile(r"\bIN\d{4,6}\b")
+_REF = re.compile(r"\bIN(\d{4,6})\b")
+# Depuis le 05/11/2026, confirmer_action rend la référence comme un simple
+# numéro : « ✅ **Intervention planifiée avec succès** **Référence:** 410 … ».
+# Gras, espaces et deux-points variables ; « Référence client: … » n'en est pas.
+_REF_NUMERO = re.compile(r"\bR[ée]f[ée]rence[\s*:_]*(?:IN)?(\d{1,6})\b", re.I)
 _REFUS = ("❌", "Aucune action")
 # Le jeton de l'action préparée — relevé le 05/11/2026 dans le récapitulatif :
 # « appelez **confirmer_action** avec confirmation=true et
@@ -417,6 +422,73 @@ _ACTION_ID = re.compile(
     r"action_id[\"'`]?\s*[=:]\s*[\"'`]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b", re.I)
 
 journal = logging.getLogger("rhi.interfast")
+
+
+def reference_rendue(reponse: str):
+    """La référence d'une case créée, au format de reference_de() (IN00410),
+    ou None. « Référence: 410 » comme « IN00410 »."""
+    m = _REF_NUMERO.search(reponse or "") or _REF.search(reponse or "")
+    return f"IN{int(m.group(1)):05d}" if m else None
+
+
+class Doublons(CaseSansReference):
+    """Plusieurs cases RHI identiques déjà dans InterFast : le bureau supprime
+    les doublons là-bas, puis tranche."""
+
+
+def _jour_paris(debut: str) -> str:
+    """« 2026-10-26T23:30:00.000Z » → « 2026-10-27 » : le jour à Paris."""
+    from zoneinfo import ZoneInfo
+    d = dt.datetime.fromisoformat(debut.strip().replace("Z", "+00:00"))
+    paris = ZoneInfo("Europe/Paris")
+    return (d.replace(tzinfo=paris) if d.tzinfo is None else d.astimezone(paris)).date().isoformat()
+
+
+async def cases_existantes(case: dict, transport=None) -> list:
+    """Les interventions déjà posées par RHI pour cette case : même titre (la
+    description de RHI), même jour à Paris, dans le planning du premier
+    technicien. Lève InterFastIndisponible si l'on ne peut pas le savoir :
+    dans le doute, on ne crée pas (échec fermé).
+
+    consulter_planning prend la DATE de la case, pas la semaine ISO : relevé
+    le 05/11/2026, « 2027-W01 » y rend la semaine du 28/12 au 03/01 — le MCP
+    numérote les semaines autrement que l'ISO les années où le 1er janvier
+    tombe un vendredi, un samedi ou un dimanche —, tandis que « 2027-01-05 »
+    rend bien la semaine du lundi 4 au dimanche 10. Réponse : du JSON
+    {"kind": "planning_events", "items": […]}, ou une phrase « Aucun
+    événement planifié » quand la semaine est vide."""
+    ferme = "rien n'est créé"
+    techniciens = case.get("techniciens") or []
+    if not techniciens:
+        raise InterFastIndisponible(f"Aucun technicien pour chercher la case dans InterFast : {ferme}")
+    try:
+        texte = await outil("consulter_planning", {"semaine": case["jour"], "technicien": techniciens[0]},
+                            transport)
+    except InterFastIndisponible as e:
+        raise InterFastIndisponible(f"Recherche de la case dans InterFast impossible ({e}) : {ferme}") from e
+    if "{" not in texte and "Aucun événement planifié" in texte:
+        return []
+    illisible = InterFastIndisponible(
+        f"Planning InterFast illisible, impossible de savoir si la case existe : {ferme}. Début : {texte[:120]}")
+    if "(tronqué)" in texte:
+        raise illisible
+    try:
+        d = json.loads(texte[texte.index("{"):texte.rindex("}") + 1])
+    except ValueError:
+        raise illisible from None
+    items = d.get("items") if isinstance(d, dict) and d.get("kind") == "planning_events" else None
+    if not isinstance(items, list):
+        raise illisible
+    trouvees = []
+    for it in items:
+        if not isinstance(it, dict) or (it.get("title") or "").strip() != case["description"].strip():
+            continue
+        try:
+            if _jour_paris(str(it.get("start"))) == case["jour"]:
+                trouvees.append(int(it["id"]))
+        except (ValueError, TypeError, KeyError):
+            raise illisible from None
+    return trouvees
 
 
 def action_id(recap: str):
@@ -449,6 +521,26 @@ async def poser_case(case: dict, transport=None) -> str:
             "duree": case["duree"], "techniciens": case["techniciens"], "description": case["description"]}
     if case.get("chantier"):
         args["chantier"] = case["chantier"]
+    # Jamais deux fois la même case (05/11/2026 : une confirmation lue « sans
+    # référence », renvoyée par le bureau, a créé 409 ET 410).
+    existantes = await cases_existantes(case, transport)
+    if existantes:
+        refs = []
+        for num in existantes:
+            try:
+                ref = await reference_de(num, transport)
+            except InterFastIndisponible as e:
+                raise InterFastIndisponible(
+                    f"Case déjà dans InterFast (id {num}), référence illisible ({e}) : rien n'est créé") from e
+            refs.append(ref or f"id {num}")
+        if len(existantes) > 1:
+            journal.warning("planifier %s : %d cases existantes, rien n'est créé", quoi, len(existantes))
+            raise Doublons(f"{len(existantes)} cases RHI identiques déjà dans InterFast ({', '.join(refs)}) : "
+                           "supprimer les doublons dans InterFast, puis indiquer la référence gardée")
+        if not refs[0].startswith("IN"):
+            raise InterFastIndisponible(f"Case déjà dans InterFast ({refs[0]}), référence illisible : rien n'est créé")
+        journal.info("planifier %s : case existante reprise, référence %s", quoi, refs[0])
+        return refs[0]
     try:
         recap = await outil("planifier_intervention", args, transport)
     except InterFastIndisponible as e:
@@ -471,12 +563,12 @@ async def poser_case(case: dict, transport=None) -> str:
     if any(x in reponse for x in _REFUS):
         journal.warning("confirmer %s : refus", quoi)
         raise CaseSansReference(f"Confirmation refusée ou déjà faite ({reponse[:300]}) : la case existe peut-être")
-    m = _REF.search(reponse)
-    if not m:
+    ref = reference_rendue(reponse)
+    if not ref:
         journal.warning("confirmer %s : réponse sans référence", quoi)
         raise CaseSansReference(f"Confirmée sans référence : {reponse[:300]}")
-    journal.info("confirmer %s : référence %s", quoi, m.group(0))
-    return m.group(0)
+    journal.info("confirmer %s : référence %s", quoi, ref)
+    return ref
 
 
 # Les heures saisies à la clôture d'une intervention — relevé du 29/09/2026 :
