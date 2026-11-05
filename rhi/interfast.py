@@ -409,15 +409,38 @@ class CaseSansReference(InterFastIndisponible):
 
 _REF = re.compile(r"\bIN\d{4,6}\b")
 _REFUS = ("❌", "Aucune action")
+# Le jeton de l'action préparée — relevé le 05/11/2026 dans le récapitulatif :
+# « appelez **confirmer_action** avec confirmation=true et
+# action_id="54ce6167-…" ». Tolérant : guillemets, apostrophes, backticks ou
+# rien, `=` ou `:` (forme JSON). Un uuid, rien d'autre.
+_ACTION_ID = re.compile(
+    r"action_id[\"'`]?\s*[=:]\s*[\"'`]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b", re.I)
+
+journal = logging.getLogger("rhi.interfast")
+
+
+def action_id(recap: str):
+    """L'action_id d'un récapitulatif, ou None. Deux jetons différents :
+    None aussi — confirmer l'un au hasard pourrait créer la mauvaise case."""
+    vus = {m.lower() for m in _ACTION_ID.findall(recap or "")}
+    return vus.pop() if len(vus) == 1 else None
 
 
 async def poser_case(case: dict, transport=None) -> str:
     """Pose une case dans le planning InterFast et rend sa référence (IN…).
 
     Les deux temps du MCP : planifier_intervention prépare et récapitule,
-    confirmer_action crée. Un refus (« ❌ », « Aucune action ») s'arrête là,
-    sans réessayer avec d'autres paramètres : le MCP le demande, et une
-    case posée au mauvais endroit fausse un point d'affaire en silence."""
+    confirmer_action crée. Depuis le 05/11/2026, le MCP exige l'action_id
+    que rend le récapitulatif (l'action expire en 10 minutes) : sans lui,
+    rien n'est confirmé et la case reste prête. Un refus (« ❌ », « Aucune
+    action ») s'arrête là, sans réessayer avec d'autres paramètres : le MCP
+    le demande, et une case posée au mauvais endroit fausse un point
+    d'affaire en silence.
+
+    Chaque étape est journalisée (CH, jour, issue) — jamais la clé, ni le
+    client, ni les techniciens : c'est ce qui manquait le 05/11/2026 pour
+    comprendre pourquoi l'essai sur CH00066 ne posait rien."""
+    quoi = f"{case.get('ch')} {case.get('jour')}"
     if not ecriture_permise(case.get("ch")):
         raise EcritureCoupee(
             f"Écriture InterFast coupée pour {case.get('ch')} : seule l'affaire d'essai "
@@ -426,19 +449,33 @@ async def poser_case(case: dict, transport=None) -> str:
             "duree": case["duree"], "techniciens": case["techniciens"], "description": case["description"]}
     if case.get("chantier"):
         args["chantier"] = case["chantier"]
-    recap = await outil("planifier_intervention", args, transport)
+    try:
+        recap = await outil("planifier_intervention", args, transport)
+    except InterFastIndisponible as e:
+        journal.warning("planifier %s : échec (%s)", quoi, type(e).__name__)
+        raise
     if any(x in recap for x in _REFUS):
+        journal.warning("planifier %s : refus", quoi)
         raise InterFastIndisponible(f"InterFast refuse la case : {recap[:300]}")
+    jeton = action_id(recap)
+    journal.info("planifier %s : récap reçu, action_id %s", quoi, "trouvé" if jeton else "absent")
+    if not jeton:
+        raise InterFastIndisponible(
+            f"Récapitulatif sans action_id : rien n'est confirmé, la case reste prête. Début : {recap[:200]}")
     # À partir d'ici, tout ce qui n'est pas « créée, IN… » est incertain.
     try:
-        reponse = await outil("confirmer_action", {"confirmation": True}, transport)
+        reponse = await outil("confirmer_action", {"confirmation": True, "action_id": jeton}, transport)
     except InterFastIndisponible as e:
+        journal.warning("confirmer %s : sans réponse (%s)", quoi, type(e).__name__)
         raise CaseSansReference(f"Confirmation sans réponse ({e}) : la case existe peut-être") from e
     if any(x in reponse for x in _REFUS):
+        journal.warning("confirmer %s : refus", quoi)
         raise CaseSansReference(f"Confirmation refusée ou déjà faite ({reponse[:300]}) : la case existe peut-être")
     m = _REF.search(reponse)
     if not m:
+        journal.warning("confirmer %s : réponse sans référence", quoi)
         raise CaseSansReference(f"Confirmée sans référence : {reponse[:300]}")
+    journal.info("confirmer %s : référence %s", quoi, m.group(0))
     return m.group(0)
 
 

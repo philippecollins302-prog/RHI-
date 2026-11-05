@@ -131,6 +131,16 @@ InterFast* :
   case (`cases_interfast`) et sur chaque pointage, donc jamais deux envois.
   **Un seul envoi à la fois** : un second clic, ou un autre poste, reçoit un
   409. Un refus (« ❌ ») à la planification s'arrête avant la confirmation.
+  **Depuis le 05/11/2026, le MCP exige un `action_id`** : le récapitulatif
+  de `planifier_intervention` le donne (« appelez **confirmer_action** avec
+  confirmation=true et action_id="…" »), `confirmer_action` le demande
+  (`{"confirmation": bool, "action_id": str}`, les deux requis) et l'action
+  **expire au bout de 10 minutes**. RHI le lit dans le récapitulatif ;
+  absent (ou deux jetons différents), rien n'est confirmé et la case reste
+  prête. C'est ce qui faisait échouer l'essai sur CH00066 ce jour-là.
+  Chaque étape est journalisée (`rhi.interfast` : CH, jour, « action_id
+  trouvé/absent », « référence IN… », « réponse sans référence », « refus »),
+  sans la clé ni le client ni les techniciens (`banc-confirmer`).
   Une fois la confirmation partie, **tout ce qui n'est pas « IN… créée »
   est incertain** : pas de référence, « Aucune action » (un 502 rejoué
   après création répond ainsi), un délai dépassé. La case est alors

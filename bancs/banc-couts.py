@@ -273,7 +273,11 @@ def lecture(chemin):
     raise AssertionError(f"lecture inattendue : {chemin}")
 
 
-reponses = {"planifier_intervention": "📋 Récapitulatif … Confirmez avec confirmer_action.",
+# Forme du récapitulatif relevée le 05/11/2026 : l'action_id est exigé à la confirmation.
+ACTION = "54ce6167-6dce-4cfd-bfb2-ce0bfadb1922"
+RECAP = ("📋 Récapitulatif … Une fois l'utilisateur d'accord, appelez **confirmer_action** avec "
+         f'confirmation=true et action_id="{ACTION}". _Cette action expire dans 10 minutes._')
+reponses = {"planifier_intervention": RECAP,
             "confirmer_action": "✅ Intervention IN00321 planifiée le 28/09/2026."}
 
 
@@ -308,7 +312,7 @@ try:
     verif(plan == {"client": "BAILLEUR SUD", "chantier": "Résidence des Pins", "date": "2026-09-28",
                    "heure": "07:00", "duree": "5h", "techniciens": ["Paul Martin", "Jean Durand", "Zoe Aubert"],
                    "description": "RHI · CH00901 · pointage"}, f"ce qui part : {plan}")
-    verif(ecrits[1][1] == {"confirmation": True}, "confirmation explicite")
+    verif(ecrits[1][1] == {"confirmation": True, "action_id": ACTION}, "confirmation explicite, avec l'action_id")
     e = c.get("/api/interfast/envois?semaine=2026-09-28").json()
     c28 = {x["id"]: x for x in e["cases"]}["CH00901|2026-09-28"]
     verif(c28["etat"] == "posée" and c28["ref"] == "IN00321", "la case est posée, avec sa référence")
@@ -361,8 +365,16 @@ try:
     r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
     verif(r.json()["posees"] == [] and "introuvable" in r.json()["echecs"][0]["erreur"], f"refus rapporté : {r.text}")
     verif([n for n, _ in ecrits] == ["planifier_intervention"], "pas de confirmation après un refus")
+    # Un récapitulatif sans action_id : rien n'est confirmé, la case reste prête.
+    reponses["planifier_intervention"] = "📋 Récapitulatif … Confirmez avec confirmer_action."
+    ecrits.clear()
+    r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
+    verif(r.json()["posees"] == [] and "sans action_id" in r.json()["echecs"][0]["erreur"], f"sans action_id : dit ({r.text})")
+    verif([n for n, _ in ecrits] == ["planifier_intervention"], "sans action_id : aucune confirmation envoyée")
+    verif({x["id"]: x for x in c.get("/api/interfast/envois?semaine=2026-09-28").json()["cases"]}
+          ["CH00902|2026-09-29"]["etat"] == "prête", "sans action_id : la case reste prête")
     # Confirmée sans référence : marquée À VÉRIFIER, jamais renvoyée.
-    reponses["planifier_intervention"] = "Récapitulatif"
+    reponses["planifier_intervention"] = RECAP
     reponses["confirmer_action"] = "C'est fait."
     r = c.post("/api/interfast/envois", json={"semaine": "2026-09-28", "cases": ["CH00902|2026-09-29"]})
     verif(r.json()["echecs"] and "sans référence" in r.json()["echecs"][0]["erreur"], "sans référence : dit")
