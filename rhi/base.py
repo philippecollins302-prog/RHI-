@@ -2002,6 +2002,7 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
             "sans_compte": [e["technicien"] for e in equipe if not e["compte"]],
             "en_attente": attente, "a_ajouter": a_ajouter,
             "client": aff.get("client", ""), "chantier": aff.get("titre") or aff.get("chantier", ""),
+            "chantier_id": aff.get("interfast_id"),
             "description": f"RHI · {ch} · " + (" / ".join(c["libelles"]) or "pointage"),
             "ref": pose["ref"] if pose else "", "etat": etat, "blocages": blocages})
     sortie.sort(key=lambda x: (x["jour"], x["heure"], x["ch"]))
@@ -2014,15 +2015,19 @@ def envois(db, lundi: dt.date, a: dt.datetime) -> dict:
             "heures_pretes": round(sum(x["heures"] for x in sortie if x["etat"] == "prête"), 2)}
 
 
-def case_posee(db, case: dict, ref: str) -> None:
+def case_posee(db, case: dict, ref: str, num=None) -> None:
     """InterFast a créé la case : on garde sa référence, sur la case et sur
     chaque pointage qu'elle porte — c'est ce qui interdit de l'envoyer deux
-    fois et de dévalider la semaine en silence."""
+    fois et de dévalider la semaine en silence. Et l'id interne de
+    l'intervention (`num`) quand on le connaît : les références InterFast ne
+    sont pas uniques (05/11/2026), l'id l'est — c'est lui que les relectures
+    suivent."""
     ids = [i for e in case["equipe"] if e["valide"] for i in e["ids"]]
     with db:
-        db.execute("""INSERT INTO cases_interfast(ch, jour, ref, posee_le) VALUES (?,?,?,?)
-                      ON CONFLICT(ch, jour) DO UPDATE SET ref=excluded.ref, posee_le=excluded.posee_le""",
-                   (case["ch"], case["jour"], ref, _iso(maintenant())))
+        db.execute("""INSERT INTO cases_interfast(ch, jour, ref, posee_le, num) VALUES (?,?,?,?,?)
+                      ON CONFLICT(ch, jour) DO UPDATE SET ref=excluded.ref, posee_le=excluded.posee_le,
+                        num=excluded.num""",
+                   (case["ch"], case["jour"], str(ref), _iso(maintenant()), num))
         db.executemany("UPDATE pointages SET interfast=? WHERE id=?", [(ref, i) for i in ids])
 
 
@@ -2054,7 +2059,30 @@ def completer_case(db, ch: str, jour: str) -> int:
             (case["ref"], ch, jour, lundi)).rowcount
 
 
-def reference_case(db, ch: str, jour: str, ref: str) -> dict:
+def contexte_case(db, ch: str, jour: str) -> dict:
+    """De quoi retrouver une case dans InterFast : le chantier (son id
+    InterFast) et un technicien (son nom InterFast) de ceux qui l'ont pointée."""
+    aff = db.execute("SELECT interfast_id FROM affaires WHERE ch=?", (ch,)).fetchone()
+    tech = db.execute("""SELECT pe.nom_complet FROM pointages po JOIN personnes pe ON pe.nom = po.personne
+                         WHERE po.ch=? AND substr(po.debut, 1, 10)=? AND po.annule=0
+                           AND pe.interfast_user_id IS NOT NULL AND pe.nom_complet != ''
+                         ORDER BY po.debut LIMIT 1""", (ch, jour)).fetchone()
+    return {"chantier_id": aff["interfast_id"] if aff else None, "technicien": tech[0] if tech else None}
+
+
+def ref_a_trancher(db, ch: str, jour: str, ref: str) -> str:
+    """Les contrôles de reference_case, avant d'aller chercher dans InterFast :
+    la référence normalisée (« in00401 » → « IN00401 »), ou une erreur."""
+    case = _case(db, ch, jour)
+    if case["ref"] != A_VERIFIER:
+        raise ValueError(f"La case {ch} du {jour} a déjà sa référence ({case['ref']})")
+    ref = ref.strip().upper()
+    if ref and not re.fullmatch(r"IN\d{4,6}", ref):
+        raise ValueError("Une référence InterFast : IN suivi de chiffres (ex. IN00123)")
+    return ref
+
+
+def reference_case(db, ch: str, jour: str, ref: str, num=None) -> dict:
     """Une case « À VÉRIFIER » tranchée par le bureau, après un œil dans
     InterFast : elle y est (on garde sa vraie référence IN…), ou elle n'y
     est pas (on l'efface de RHI, et elle redevient prête à partir).
@@ -2068,7 +2096,7 @@ def reference_case(db, ch: str, jour: str, ref: str) -> dict:
         raise ValueError("Une référence InterFast : IN suivi de chiffres (ex. IN00123)")
     with db:
         if ref:
-            db.execute("UPDATE cases_interfast SET ref=? WHERE ch=? AND jour=?", (ref, ch, jour))
+            db.execute("UPDATE cases_interfast SET ref=?, num=? WHERE ch=? AND jour=?", (ref, num, ch, jour))
         else:
             db.execute("DELETE FROM cases_interfast WHERE ch=? AND jour=?", (ch, jour))
         db.execute("""UPDATE pointages SET interfast=? WHERE interfast=? AND ch=?
@@ -2087,7 +2115,8 @@ def cases_posees(db, lundi: dt.date) -> list:
             """SELECT DISTINCT pe.interfast_user_id FROM pointages po JOIN personnes pe ON pe.nom = po.personne
                WHERE po.interfast=? AND pe.interfast_user_id IS NOT NULL""", (r["ref"],))]
         sortie.append({"ref": r["ref"], "num": r["num"], "ch": r["ch"],
-                       "jour": dt.date.fromisoformat(r["jour"]), "users": users})
+                       "jour": dt.date.fromisoformat(r["jour"]), "users": users,
+                       **contexte_case(db, r["ch"], r["jour"])})
     return sortie
 
 
@@ -2096,9 +2125,10 @@ def _paris(iso_utc: str) -> str:
     return _iso(t.astimezone(PARIS).replace(tzinfo=None))
 
 
-def enregistrer_suivi(db, ref: str, num, entrees: list) -> None:
+def enregistrer_suivi(db, ch: str, jour: str, ref: str, num, entrees: list) -> None:
     """Ce qu'InterFast a reçu à la clôture de la case. Aucune entrée : la
-    case n'est pas encore terminée."""
+    case n'est pas encore terminée. La case se désigne par (ch, jour) : une
+    référence InterFast peut en désigner plusieurs (05/11/2026)."""
     par_user = {}
     for e in entrees:
         u = par_user.setdefault(e["user"], {"debut": _paris(e["debut"]), "fin": _paris(e["fin"]),
@@ -2107,8 +2137,8 @@ def enregistrer_suivi(db, ref: str, num, entrees: list) -> None:
         u["minutes"] += e["minutes"]
         u["pause"] += e["pause"]
     with db:
-        db.execute("UPDATE cases_interfast SET num=COALESCE(?, num), terminee=?, relue_le=? WHERE ref=?",
-                   (num, 1 if par_user else 0, _iso(maintenant()), ref))
+        db.execute("UPDATE cases_interfast SET num=COALESCE(?, num), terminee=?, relue_le=? WHERE ch=? AND jour=?",
+                   (num, 1 if par_user else 0, _iso(maintenant()), ch, str(jour)))
         db.execute("DELETE FROM heures_interfast WHERE ref=?", (ref,))
         db.executemany("INSERT INTO heures_interfast VALUES (?,?,?,?,?,?)",
                        [(ref, uid, u["debut"], u["fin"], u["minutes"], u["pause"]) for uid, u in par_user.items()])

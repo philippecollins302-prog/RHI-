@@ -45,9 +45,15 @@ class FauxMCP:
         self.recap, self.attendu, self.refus, self.appels = recap, attendu, refus, []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":   # REST /v1/events refusée : l'anti-doublon passe par le MCP (banc-doublon)
+            return httpx.Response(404, json={"message": "Not found"})
         verif(CLE not in req.content.decode(), "la clé ne part jamais dans le corps")
         corps = json.loads(req.content)
         nom, args = corps["params"]["name"], corps["params"]["arguments"]
+        if nom == "consulter_planning":   # l'anti-doublon : rien d'existant (banc-doublon)
+            texte = "📅 **Planning**\n\nAucun événement planifié sur cette période."
+            res = {"content": [{"type": "text", "text": texte}]}
+            return httpx.Response(200, text="data: " + json.dumps({"result": res}) + "\n\n")
         self.appels.append((nom, args))
         if nom == "planifier_intervention":
             texte = self.recap

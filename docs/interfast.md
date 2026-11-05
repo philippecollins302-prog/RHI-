@@ -141,6 +141,53 @@ InterFast* :
   Chaque étape est journalisée (`rhi.interfast` : CH, jour, « action_id
   trouvé/absent », « référence IN… », « réponse sans référence », « refus »),
   sans la clé ni le client ni les techniciens (`banc-confirmer`).
+  **La référence rendue a changé le même jour** : `confirmer_action` répond
+  « ✅ **Intervention planifiée avec succès** **Référence:** 410 … », un
+  simple numéro, plus « IN00410 ». RHI lit les deux (gras, espaces et
+  deux-points variables) et garde `IN{n:05d}`, le format de `reference_de()`.
+  Un « ✅ … avec succès » sans numéro reste « à vérifier ». Faute de le lire,
+  l'essai CH00066 est passé « à vérifier », le bureau l'a renvoyé, et
+  InterFast a reçu **deux** interventions identiques (409 et 410).
+  **Anti-doublon, avant toute création** (premier envoi comme « la
+  renvoyer ») : RHI cherche la case dans InterFast, **par l'API REST
+  d'abord** — `GET /v1/events` (clé dans l'en-tête `X-API-KEY`, comme pour
+  les comptes ; `start`, `end`, `page`, `count`, `archived=false` et
+  `meeting=false` requis), filtrée sur le jour de la case (±1 jour, pour
+  les fuseaux) et sur son chantier (`worksites` = l'id InterFast du
+  chantier, celui que rend `rechercher_chantiers`), 50 par page, 10 pages
+  au plus, 20 s par page. Réponse relevée le 05/11/2026 : `{"count":
+  total, "items": [{"id", "title", "reference": "IN00410", "start",
+  "worksite": {"id", "title"}, "users", …}]}`. **Repli** sur
+  `consulter_planning` (technicien = le premier de la case) seulement si
+  la REST répond 401, 403, 404 ou illisible ; un 429 ou un 5xx s'arrête là.
+  RHI ne garde que les interventions dont le titre est exactement la
+  description posée par RHI (« RHI · CH… · … ») et qui commencent, à Paris,
+  le jour de la case. Une trouvée : rien n'est créé, sa référence (lue dans
+  la REST, sinon par `reference_de`) et son id sont repris et la case est
+  posée (journal : « case existante reprise »). Plusieurs : rien n'est
+  créé, la case est « à vérifier » avec leurs références, pour supprimer
+  les doublons dans InterFast. Aucune : création comme avant. **Recherche
+  impossible** (réseau, réponse coupée ou illisible, aucun technicien) :
+  rien n'est créé, la case reste prête — on échoue fermé.
+  `consulter_planning` reçoit la **date** de la case et pas la semaine ISO :
+  relevé le 05/11/2026, « 2027-W01 » y rend la semaine du 28/12 au 03/01,
+  alors que « 2027-01-05 » rend bien le lundi 4 au dimanche 10. Une semaine
+  vide y répond par une phrase (« Aucun événement planifié sur cette
+  période. »), pas par du JSON (`banc-doublon`).
+  **Les références d'intervention ne sont PAS uniques** (05/11/2026 :
+  IN00410 est notre case CH00066 du 27/10 ET une visite de maintenance de
+  2022 dans un lycée — `GET /v1/events?name=IN00410` rend les deux). RHI
+  garde donc **l'id interne** de l'intervention à côté de la référence
+  (`cases_interfast.num`) dès la pose ou la reprise, et toute relecture
+  (heures, état) part de lui. Une case posée sans son id (l'essai
+  CH00066) le retrouve à la relecture suivante par jour + chantier + titre
+  (la référence départage deux cases RHI du même CH) ; sinon, comme avant,
+  par les heures du jour de ses techniciens. « Elle existe : c'est cette
+  référence » cherche la référence (`name=`) et retient l'intervention du
+  jour et du chantier de la case ; aucune ou plusieurs : refus (409) avec
+  la liste des interventions de cette référence. InterFast injoignable :
+  503, rien n'est tranché. La relecture met la case à jour par (CH, jour),
+  plus par sa référence.
   Une fois la confirmation partie, **tout ce qui n'est pas « IN… créée »
   est incertain** : pas de référence, « Aucune action » (un 502 rejoué
   après création répond ainsi), un délai dépassé. La case est alors

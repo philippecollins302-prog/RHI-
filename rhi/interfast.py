@@ -21,6 +21,7 @@ n'est pas décidée (voir docs/interfast.md). Une écriture ratée dans
 InterFast fausse un point d'affaire en silence ; un export, lui, se relit.
 """
 import asyncio
+import datetime as dt
 import json
 import logging
 import os
@@ -407,7 +408,11 @@ class CaseSansReference(InterFastIndisponible):
     On ne la renvoie pas (doublon) ; le bureau vérifie dans InterFast."""
 
 
-_REF = re.compile(r"\bIN\d{4,6}\b")
+_REF = re.compile(r"\bIN(\d{4,6})\b")
+# Depuis le 05/11/2026, confirmer_action rend la référence comme un simple
+# numéro : « ✅ **Intervention planifiée avec succès** **Référence:** 410 … ».
+# Gras, espaces et deux-points variables ; « Référence client: … » n'en est pas.
+_REF_NUMERO = re.compile(r"\bR[ée]f[ée]rence[\s*:_]*(?:IN)?(\d{1,6})\b", re.I)
 _REFUS = ("❌", "Aucune action")
 # Le jeton de l'action préparée — relevé le 05/11/2026 dans le récapitulatif :
 # « appelez **confirmer_action** avec confirmation=true et
@@ -419,6 +424,196 @@ _ACTION_ID = re.compile(
 journal = logging.getLogger("rhi.interfast")
 
 
+def reference_rendue(reponse: str):
+    """La référence d'une case créée, au format de reference_de() (IN00410),
+    ou None. « Référence: 410 » comme « IN00410 »."""
+    m = _REF_NUMERO.search(reponse or "") or _REF.search(reponse or "")
+    return f"IN{int(m.group(1)):05d}" if m else None
+
+
+class Doublons(CaseSansReference):
+    """Plusieurs cases RHI identiques déjà dans InterFast : le bureau supprime
+    les doublons là-bas, puis tranche."""
+
+
+class Posee(str):
+    """La référence d'une case posée (« IN00410 »), avec l'id interne de
+    l'intervention dans `.num` (2097424) ou None. Les références InterFast ne
+    sont PAS uniques (05/11/2026 : IN00410 est notre case CH00066 du 27/10 ET
+    une visite de 2022 dans un lycée) : l'id, lui, l'est."""
+
+    def __new__(cls, ref, num=None):
+        o = super().__new__(cls, ref)
+        o.num = num
+        return o
+
+
+def _jour_paris(debut: str) -> str:
+    """« 2026-10-26T23:30:00.000Z » → « 2026-10-27 » : le jour à Paris."""
+    from zoneinfo import ZoneInfo
+    d = dt.datetime.fromisoformat(debut.strip().replace("Z", "+00:00"))
+    paris = ZoneInfo("Europe/Paris")
+    return (d.replace(tzinfo=paris) if d.tzinfo is None else d.astimezone(paris)).date().isoformat()
+
+
+def _ref_normale(v):
+    """« IN00410 », « 410 », 410 → « IN00410 » ; rien de lisible → None."""
+    m = re.fullmatch(r"\s*(?:IN)?0*(\d{1,6})\s*", str(v or ""), re.I)
+    return f"IN{int(m.group(1)):05d}" if m else None
+
+
+def _evenement(it) -> dict:
+    """Un événement InterFast, réduit à ce qui sert à reconnaître une case.
+    REST (/v1/events) : "reference", "worksite": {"id"} ; MCP
+    (consulter_planning) : pas de référence, "worksiteId". Lève ValueError,
+    TypeError ou KeyError si l'id ou le début manque."""
+    if not isinstance(it, dict):
+        raise TypeError("événement illisible")
+    w = it.get("worksite")
+    chantier = w.get("id") if isinstance(w, dict) else it.get("worksiteId")
+    return {"id": int(it["id"]), "titre": (it.get("title") or "").strip(), "ref": _ref_normale(it.get("reference")),
+            "jour": _jour_paris(str(it["start"])), "chantier": int(chantier) if chantier else None}
+
+
+EVENTS_PAGE = 50        # événements par page
+EVENTS_PAGES = 10       # garde : une journée d'un chantier n'en a pas 500
+
+
+async def evenements_rest(filtres: dict, transport=None) -> list:
+    """GET /v1/events, page par page. Relevé le 05/11/2026 : {"count": total,
+    "items": […], "pageable": …} ; `start`, `end`, `page`, `count`,
+    `archived` et `meeting` requis ; `worksites` et `name` (titre ou
+    référence) filtrent. Clé dans l'en-tête X-API-KEY, comme pour les
+    comptes. 401/403/404 ou corps illisible : _PasEnRest (repli MCP)."""
+    k = cle()
+    if not k:
+        raise InterFastIndisponible(f"Clé {CLES[entreprise()]} absente de l'environnement")
+    lus = []
+    async with httpx.AsyncClient(timeout=REST_DELAI, transport=transport) as h:
+        for page in range(EVENTS_PAGES):
+            try:
+                r = await h.get(f"{REST_URL}/events", headers={"X-API-KEY": k, "Accept": "application/json"},
+                                params={**filtres, "page": page, "count": EVENTS_PAGE,
+                                        "archived": "false", "meeting": "false"})
+            except httpx.HTTPError as e:
+                raise InterFastIndisponible(f"InterFast injoignable : {type(e).__name__}") from e
+            if r.status_code in REST_REPLI:
+                raise _PasEnRest(f"API REST : HTTP {r.status_code}")
+            if r.status_code != 200:
+                raise InterFastIndisponible(f"InterFast répond HTTP {r.status_code} à la liste des interventions")
+            try:
+                d = r.json()
+                items, total = d["items"], int(d["count"])
+                if not isinstance(items, list):
+                    raise TypeError
+                lus += [_evenement(it) for it in items]
+            except (ValueError, TypeError, KeyError):
+                raise _PasEnRest("Réponse REST illisible") from None
+            if len(items) < EVENTS_PAGE or len(lus) >= total:
+                return lus
+    raise InterFastIndisponible(f"Plus de {EVENTS_PAGES} pages d'interventions : lecture arrêtée")
+
+
+async def _evenements_mcp(jour: str, technicien, transport=None) -> list:
+    """Le repli : consulter_planning, par DATE. Pas la semaine ISO : relevé le
+    05/11/2026, « 2027-W01 » y rend la semaine du 28/12 au 03/01 (le MCP
+    numérote les semaines autrement que l'ISO certaines années), tandis que
+    « 2027-01-05 » rend bien le lundi 4 au dimanche 10. Réponse : du JSON
+    {"kind": "planning_events", "items": […]}, ou la phrase « Aucun
+    événement planifié » quand la semaine est vide. Coupée : illisible."""
+    if not technicien:
+        raise InterFastIndisponible("Aucun technicien pour chercher dans le planning InterFast")
+    texte = await outil("consulter_planning", {"semaine": jour, "technicien": technicien}, transport)
+    if "{" not in texte and "Aucun événement planifié" in texte:
+        return []
+    illisible = InterFastIndisponible(f"Planning InterFast illisible. Début : {texte[:120]}")
+    if "(tronqué)" in texte:
+        raise illisible
+    try:
+        d = json.loads(texte[texte.index("{"):texte.rindex("}") + 1])
+        items = d.get("items") if isinstance(d, dict) and d.get("kind") == "planning_events" else None
+        if not isinstance(items, list):
+            raise TypeError
+        return [_evenement(it) for it in items]
+    except (ValueError, TypeError, KeyError):
+        raise illisible from None
+
+
+async def interventions_du_jour(jour: str, chantier_id, technicien, transport=None) -> list:
+    """Les interventions qui commencent, à Paris, le jour donné, sur le
+    chantier s'il est connu. Par l'API REST, filtrée sur le jour (±1 pour
+    les fuseaux) et le chantier ; par consulter_planning (le planning du
+    technicien) seulement si la REST répond 401/403/404 ou illisible.
+    Lève InterFastIndisponible si l'on ne peut pas le savoir."""
+    j = dt.date.fromisoformat(jour)
+    filtres = {"start": f"{j - dt.timedelta(days=1)}T00:00:00", "end": f"{j + dt.timedelta(days=1)}T23:59:59"}
+    if chantier_id:
+        filtres["worksites"] = int(chantier_id)
+    try:
+        evts = await evenements_rest(filtres, transport)
+    except _PasEnRest as e:
+        journal.info("recherche %s : REST refusée (%s), repli sur consulter_planning", jour, e)
+        evts = await _evenements_mcp(jour, technicien, transport)
+    return [e for e in evts if e["jour"] == jour
+            and (not chantier_id or not e["chantier"] or e["chantier"] == int(chantier_id))]
+
+
+async def cases_existantes(case: dict, transport=None) -> list:
+    """Les interventions déjà posées par RHI pour cette case : même titre (la
+    description de RHI), même jour à Paris, même chantier. Lève
+    InterFastIndisponible si l'on ne peut pas le savoir : dans le doute, on
+    ne crée pas (échec fermé)."""
+    ferme = "rien n'est créé"
+    techniciens = case.get("techniciens") or []
+    if not techniciens:
+        raise InterFastIndisponible(f"Aucun technicien pour chercher la case dans InterFast : {ferme}")
+    try:
+        evts = await interventions_du_jour(case["jour"], case.get("chantier_id"), techniciens[0], transport)
+    except InterFastIndisponible as e:
+        raise InterFastIndisponible(f"Recherche de la case dans InterFast impossible ({e}) : {ferme}") from e
+    return [e for e in evts if e["titre"] == case["description"].strip()]
+
+
+async def num_de_case(ch: str, jour: str, ref: str, chantier_id, technicien, transport=None):
+    """L'id interne d'une case RHI déjà posée, par jour + chantier + titre
+    (« RHI · CH… · … »), et par la référence quand la REST la donne. Une
+    seule candidate : son id ; sinon None (on ne devine pas)."""
+    evts = await interventions_du_jour(jour, chantier_id, technicien, transport)
+    cands = [e for e in evts if e["titre"].startswith(f"RHI · {ch} · ") and e["ref"] in (None, ref)]
+    return cands[0]["id"] if len(cands) == 1 else None
+
+
+class ReferenceAmbigue(ValueError):
+    """La référence donnée au bureau ne désigne pas UNE intervention au jour
+    et au chantier de la case."""
+
+
+async def retrouver_reference(ref: str, jour: str, chantier_id, technicien, transport=None) -> int:
+    """« Elle existe : c'est IN00410 » : l'id de l'intervention de cette
+    référence qui est au jour et au chantier de la case. Plusieurs
+    interventions portent la même référence (05/11/2026) : on retient la
+    bonne, ou on refuse avec la liste. Par la REST (filtre `name`), sinon par
+    le planning du jour, chaque id relu par reference_de."""
+    ref = _ref_normale(ref)
+    try:
+        toutes = [e for e in await evenements_rest(
+            {"name": ref, "start": "2000-01-01T00:00:00", "end": "2100-01-01T00:00:00"}, transport)
+            if e["ref"] == ref]
+    except _PasEnRest:
+        toutes = []
+        for e in await _evenements_mcp(jour, technicien, transport):
+            if e["jour"] == jour and await reference_de(e["id"], transport) == ref:
+                toutes.append(dict(e, ref=ref))
+    bonnes = [e for e in toutes if e["jour"] == jour
+              and (not chantier_id or e["chantier"] is None or e["chantier"] == int(chantier_id))]
+    if len(bonnes) == 1:
+        return bonnes[0]["id"]
+    liste = ", ".join(f"id {e['id']} le {e['jour']}" + (f" (chantier {e['chantier']})" if e["chantier"] else "")
+                      for e in toutes) or "aucune"
+    raise ReferenceAmbigue(f"{ref} : {len(bonnes)} intervention(s) de cette référence au jour et au chantier de la "
+                           f"case (toutes : {liste}). Vérifier la référence dans InterFast.")
+
+
 def action_id(recap: str):
     """L'action_id d'un récapitulatif, ou None. Deux jetons différents :
     None aussi — confirmer l'un au hasard pourrait créer la mauvaise case."""
@@ -426,7 +621,7 @@ def action_id(recap: str):
     return vus.pop() if len(vus) == 1 else None
 
 
-async def poser_case(case: dict, transport=None) -> str:
+async def poser_case(case: dict, transport=None) -> Posee:
     """Pose une case dans le planning InterFast et rend sa référence (IN…).
 
     Les deux temps du MCP : planifier_intervention prépare et récapitule,
@@ -449,6 +644,26 @@ async def poser_case(case: dict, transport=None) -> str:
             "duree": case["duree"], "techniciens": case["techniciens"], "description": case["description"]}
     if case.get("chantier"):
         args["chantier"] = case["chantier"]
+    # Jamais deux fois la même case (05/11/2026 : une confirmation lue « sans
+    # référence », renvoyée par le bureau, a créé 409 ET 410).
+    existantes = await cases_existantes(case, transport)
+    if existantes:
+        refs = []
+        for e in existantes:
+            try:
+                ref = e["ref"] or await reference_de(e["id"], transport)
+            except InterFastIndisponible as err:
+                raise InterFastIndisponible(
+                    f"Case déjà dans InterFast (id {e['id']}), référence illisible ({err}) : rien n'est créé") from err
+            refs.append(ref or f"id {e['id']}")
+        if len(existantes) > 1:
+            journal.warning("planifier %s : %d cases existantes, rien n'est créé", quoi, len(existantes))
+            raise Doublons(f"{len(existantes)} cases RHI identiques déjà dans InterFast ({', '.join(refs)}) : "
+                           "supprimer les doublons dans InterFast, puis indiquer la référence gardée")
+        if not refs[0].startswith("IN"):
+            raise InterFastIndisponible(f"Case déjà dans InterFast ({refs[0]}), référence illisible : rien n'est créé")
+        journal.info("planifier %s : case existante reprise, référence %s, id %s", quoi, refs[0], existantes[0]["id"])
+        return Posee(refs[0], existantes[0]["id"])
     try:
         recap = await outil("planifier_intervention", args, transport)
     except InterFastIndisponible as e:
@@ -471,12 +686,20 @@ async def poser_case(case: dict, transport=None) -> str:
     if any(x in reponse for x in _REFUS):
         journal.warning("confirmer %s : refus", quoi)
         raise CaseSansReference(f"Confirmation refusée ou déjà faite ({reponse[:300]}) : la case existe peut-être")
-    m = _REF.search(reponse)
-    if not m:
+    ref = reference_rendue(reponse)
+    if not ref:
         journal.warning("confirmer %s : réponse sans référence", quoi)
         raise CaseSansReference(f"Confirmée sans référence : {reponse[:300]}")
-    journal.info("confirmer %s : référence %s", quoi, m.group(0))
-    return m.group(0)
+    # L'id interne, pour les relectures (la référence n'est pas unique). Le
+    # chercher ne fait jamais échouer une case créée : sans lui, la relecture
+    # le retrouvera par jour + chantier + titre.
+    try:
+        num = await num_de_case(case["ch"], case["jour"], ref, case.get("chantier_id"),
+                                case["techniciens"][0], transport)
+    except InterFastIndisponible:
+        num = None
+    journal.info("confirmer %s : référence %s, id %s", quoi, ref, num or "à retrouver")
+    return Posee(ref, num)
 
 
 # Les heures saisies à la clôture d'une intervention — relevé du 29/09/2026 :
