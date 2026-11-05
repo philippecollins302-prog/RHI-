@@ -419,11 +419,86 @@ function euros(v) {
 }
 
 // ── Personnes : équipe, actif, compte InterFast, coût horaire ──
+// ── À rattacher : les noms du planning et les salariés Silae (04/11/2026) ──
+// Silae liste toute l'entité : il PROPOSE, le bureau valide. L'intitulé
+// d'emploi est montré à côté de chaque proposition pour repérer un homonyme
+// d'une autre BU. Un nom en attente pointe quand même : jamais bloqué.
+function blocRattacher(s) {
+  const lecture = s.lecture;
+  return `<div class="carte">
+    <h3>À rattacher</h3>
+    <p>Les personnes viennent de Silae : chaque nom du planning se rattache à un salarié, validé ici.
+      En attendant, le nom pointe normalement sur les tablettes.</p>
+    <p><button id="relire-silae">Relire Silae</button>
+      <span class="doux">${lecture ? `Dernière lecture ${esc(lecture.le.replace('T', ' ').slice(0, 16))} : ${esc(lecture.statut)}` : 'Jamais relu'}
+      · ${esc(s.salaries.length)} salariés actifs</span> <span id="retour-silae"></span></p>
+    ${s.a_rattacher.length ? `<div class="defile"><table>
+      <tr><th>Nom (planning)</th><th>Équipe</th><th class="n">Cases</th><th>Proposition</th><th>Ou choisir</th><th></th></tr>
+      ${s.a_rattacher.map((n) => `<tr data-rattacher="${esc(n.nom_planning)}">
+        <td><strong>${esc(n.nom_planning)}</strong></td><td>${esc(n.genre)}</td><td class="n">${esc(n.nb_cases)}</td>
+        <td>${n.proposition ? `${esc(n.proposition.prenom)} ${esc(n.proposition.nom)}
+          — <strong>${esc(n.proposition.intitule_emploi || 'emploi non renseigné')}</strong>
+          · ${esc(n.proposition.dossier)} ${esc(n.proposition.matricule)}${n.proposition.deja_rattache_a
+          ? `<br><span class="pastille p-ambre">déjà rattaché à ${esc(n.proposition.deja_rattache_a)}</span>` : ''}${n.proposition.autres_candidats
+          ? `<br><span class="doux">${esc(n.proposition.autres_candidats)} autre(s) possible(s)</span>` : ''}`
+          : '<span class="doux">aucune</span>'}</td>
+        <td><select data-choix><option value="">${n.proposition ? 'la proposition' : '— choisir —'}</option>
+          ${s.salaries.map((x) => `<option value="${esc(x.dossier)}|${esc(x.matricule)}">${esc(x.nom)} ${esc(x.prenom)} — ${esc(x.intitule_emploi)} (${esc(x.dossier)})${x.alias ? ' · déjà ' + esc(x.alias) : ''}</option>`).join('')}
+        </select></td>
+        <td><button data-geste="rattacher" ${n.proposition ? `data-propose="${esc(n.proposition.dossier)}|${esc(n.proposition.matricule)}"` : ''}>Rattacher</button>
+          <button data-geste="npp">Ne pointe pas</button></td>
+      </tr>`).join('')}
+    </table></div>` : '<p><span class="pastille p-vert">Rien à rattacher</span></p>'}
+    <p><strong>Importer une table d'alias</strong> (CSV, séparateur « ; ») :
+      <code>nom_planning;dossier;matricule;ne_pointe_pas</code>
+      <input type="file" id="fichier-alias" accept=".csv,text/csv" style="width:auto">
+      <button id="importer-alias">Importer les alias</button></p>
+    <div id="rapport-alias"></div>
+  </div>`;
+}
+
+function brancherRattacher() {
+  const relire = $('#relire-silae');
+  if (!relire) return;
+  relire.onclick = async () => {
+    $('#retour-silae').textContent = 'Lecture de Silae… (jusqu\'à deux minutes)';
+    try {
+      const r = await api('/api/silae/relire', {method: 'POST'});
+      dire('Silae relu : ' + r.salaries + ' salariés (' + r.nouveaux + ' nouveaux, ' + r.partis + ' partis)'); afficher();
+    } catch (e) { $('#retour-silae').innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(e.message)}`; }
+  };
+  document.querySelectorAll('tr[data-rattacher] button[data-geste]').forEach((b) => b.onclick = async () => {
+    const tr = b.closest('tr'), nom = tr.dataset.rattacher;
+    let corps = {nom: nom, ne_pointe_pas: true};
+    if (b.dataset.geste === 'rattacher') {
+      const choix = tr.querySelector('[data-choix]').value || b.dataset.propose || '';
+      if (!choix) { dire('Choisir un salarié dans la liste'); return; }
+      const [dossier, matricule] = choix.split('|');
+      corps = {nom: nom, dossier: dossier, matricule: matricule};
+    }
+    try {
+      const r = await api('/api/alias', {method: 'POST', json: corps});
+      dire(r.ne_pointe_pas ? r.nom + ' : ne pointe pas' : r.nom + ' rattaché à ' + r.salarie); afficher();
+    } catch (e) { dire(e.message); }
+  });
+  $('#importer-alias').onclick = async () => {
+    const f = $('#fichier-alias').files[0];
+    if (!f) { dire('Choisir le fichier CSV'); return; }
+    try {
+      const r = await api('/api/alias/csv', {method: 'POST', json: {csv: await f.text()}});
+      $('#rapport-alias').innerHTML = `<p><span class="pastille p-vert">${esc(r.appliques)} lignes appliquées</span></p>` +
+        r.erreurs.map((x) => `<p><span class="pastille p-rouge">ligne ${esc(x.ligne)}</span> ${esc(x.nom)} : ${esc(x.motif)}</p>`).join('');
+      setTimeout(afficher, 4000);
+    } catch (e) { $('#rapport-alias').innerHTML = `<span class="pastille p-rouge">✗</span> ${esc(e.message)}`; }
+  };
+}
+
 async function ongletPersonnes() {
-  const [d, comptes] = await Promise.all([api('/api/personnes/detail'), api('/api/interfast/utilisateurs')]);
+  const [d, comptes, s] = await Promise.all([api('/api/personnes/detail'), api('/api/interfast/utilisateurs'),
+    api('/api/silae')]);
   const options = (choisi) => `<option value="">— aucun —</option>` + comptes.map((u) =>
     `<option value="${esc(u.id)}" ${u.id === choisi ? 'selected' : ''}>${esc(u.prenom)} ${esc(u.nom)}${u.archive ? ' (archivé)' : ''}</option>`).join('');
-  $('#vue').innerHTML = `
+  $('#vue').innerHTML = `${s.actif ? blocRattacher(s) : ''}
     <div class="carte">
       <p>Le coût horaire chiffre la main-d'œuvre de chaque chantier. Priorité : celui saisi ici, sinon celui d'InterFast
         (s'il n'est pas à 0), sinon le taux moyen ${d.cout_defaut ? `(<strong>${euros(d.cout_defaut)}</strong>/h)` : '(non réglé : variable RHI_COUT_HORAIRE)'}.</p>
@@ -438,7 +513,7 @@ async function ongletPersonnes() {
     <div class="defile"><table>
       <tr><th>Nom (planning)</th><th>Équipe</th><th>Actif</th><th>Compte InterFast</th><th class="n">Coût saisi €/h</th><th class="n">Retenu</th></tr>
       ${d.personnes.map((p) => `<tr data-nom="${esc(p.nom)}">
-        <td><strong>${esc(p.nom)}</strong>${p.interim ? ' <span class="pastille p-ambre">intérim</span>' : ''}<br><span class="doux">${esc(p.nom_complet)}</span></td>
+        <td><strong>${esc(p.nom)}</strong>${p.interim ? ' <span class="pastille p-ambre">intérim</span>' : ''}${p.dossier && p.dossier !== 'INTERIM' ? ` <span class="pastille">${esc(p.dossier)} ${esc(p.matricule)}</span>` : ''}<br><span class="doux">${esc(p.nom_complet)}</span></td>
         <td><select data-champ="equipe"><option ${p.equipe === 'atelier' ? 'selected' : ''}>atelier</option>
           <option ${p.equipe === 'pose' ? 'selected' : ''}>pose</option></select></td>
         <td><input type="checkbox" data-champ="actif" ${p.actif ? 'checked' : ''} style="width:auto"></td>
@@ -447,6 +522,7 @@ async function ongletPersonnes() {
         <td class="n">${p.cout_retenu ? euros(p.cout_retenu) : '<span class="pastille p-ambre">aucun</span>'}</td>
       </tr>`).join('')}
     </table></div>`;
+  brancherRattacher();
   $('#ajouter-personne').onclick = async () => {
     try {
       const r = await api('/api/personnes', {method: 'POST', json: {nom: $('#nouveau-nom').value, equipe: $('#nouveau-equipe').value}});

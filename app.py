@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from rhi import base, courrier, depot_auto, interfast, lecture
+from rhi import base, courrier, depot_auto, entra, interfast, lecture, silae
 
 PUBLIC = Path(__file__).parent / "public"
 
@@ -86,11 +86,26 @@ async def releveur():
         await asyncio.sleep(depot_auto.minutes() * 60)
 
 
+def salaries_relus():
+    """Les salariés Silae, si la route est réglée. Un échec est noté (le
+    bureau le voit) et ne vide jamais la table."""
+    if not silae.url():
+        return None
+    c = base.connexion(getattr(app.state, "chemin_base", None))
+    try:
+        return silae.relire(c, maintenant())
+    except silae.SilaeIndisponible as e:
+        print("salaries_relus :", e)   # message sans jeton ni lien
+        return None
+    finally:
+        c.close()
+
+
 async def veilleur():
-    """Toutes les heures : la sauvegarde du jour. (La marche en avant du lundi
-    est sortie de RHI à la revue du 01/10/2026 : elle n'est plus lancée.)"""
+    """Toutes les heures : la sauvegarde du jour, et les salariés Silae. (La
+    marche en avant du lundi est sortie de RHI à la revue du 01/10/2026.)"""
     while True:
-        for tache in (sauvegarde_du_jour,):
+        for tache in (sauvegarde_du_jour, salaries_relus):
             try:
                 await asyncio.to_thread(tache)
             except Exception as e:  # une tâche ratée ne doit pas tuer l'appli
@@ -299,8 +314,20 @@ def version() -> str:
 @app.get("/api/sante/detail", dependencies=[Depends(acces_bureau)])
 def sante_detail(c=Depends(db)):
     """Ce qu'on vérifie après chaque déploiement (docs/deploiement.md) : la
-    base doit être dans donnees/ (le bucket), en journal « delete »."""
-    return _etat(c)
+    base doit être dans donnees/ (le bucket), en journal « delete ».
+
+    Silae et Graph : oui ou non, et des comptes — jamais un jeton, un lien ni
+    un identifiant. jeton_ok demande vraiment un jeton à Entra (gardé une
+    heure : au plus un appel par heure et par scope)."""
+    graph_conf = entra.configure() and any(depot_auto.est_graph(u) for u in depot_auto.sources())
+    return _etat(c) | {
+        "silae": {"configure": silae.configure(),
+                  "jeton_ok": silae.configure() and entra.essayer(entra.SCOPE_SILAE),
+                  "salaries": c.execute("SELECT COUNT(*) FROM salaries").fetchone()[0],
+                  "a_rattacher": c.execute("SELECT COUNT(*) FROM noms_a_rattacher").fetchone()[0]},
+        "graph_plannings": {"configure": graph_conf,
+                            "jeton_ok": graph_conf and entra.essayer(entra.SCOPE_GRAPH)},
+    }
 
 
 @app.get("/api/personnes", dependencies=[Depends(acces_terrain)])
@@ -545,6 +572,56 @@ def api_personne(nom: str, p: Personne, c=Depends(db)):
             c.execute("UPDATE personnes SET cout_horaire=? WHERE nom=?",
                       (p.cout_horaire or None, nom.upper()))
     return {"ok": True}
+
+
+# ── Salariés Silae et rattachements (04/11/2026) : lecture seule de Silae ──
+
+class Rattachement(BaseModel):
+    nom: str = Field(max_length=60)
+    dossier: str = Field(default="", max_length=20)
+    matricule: str = Field(default="", max_length=20)
+    ne_pointe_pas: bool = False
+    qui: str = Field(default="bureau", max_length=60)
+
+
+class TableAlias(BaseModel):
+    csv: str = Field(max_length=base.CSV_MAX)
+    qui: str = Field(default="bureau", max_length=60)
+
+
+@app.get("/api/silae", dependencies=[Depends(acces_bureau)])
+def api_silae(c=Depends(db)):
+    """L'onglet Personnes : la dernière lecture, les salariés actifs (choix
+    manuel), et les noms du planning à rattacher avec leur proposition."""
+    return {"actif": base.silae_actif(), "configure": silae.configure(),
+            "lecture": base.lecture_de(c, silae.SOURCE),
+            "salaries": base.salaries(c), "a_rattacher": base.a_rattacher(c)}
+
+
+@app.post("/api/silae/relire", dependencies=[Depends(acces_bureau)])
+async def api_silae_relire(c=Depends(db)):
+    try:
+        return await asyncio.to_thread(silae.relire, c, maintenant())
+    except silae.SilaeIndisponible as e:
+        raise HTTPException(503, str(e))
+
+
+@app.post("/api/alias", dependencies=[Depends(acces_bureau)])
+def api_alias(r: Rattachement, c=Depends(db)):
+    try:
+        if r.ne_pointe_pas:
+            return base.ne_pointe_pas(c, r.nom, r.qui, maintenant())
+        return base.rattacher(c, r.nom, r.dossier, r.matricule, r.qui, maintenant())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/alias/csv", dependencies=[Depends(acces_bureau)])
+def api_alias_csv(t: TableAlias, c=Depends(db)):
+    try:
+        return base.importer_alias_csv(c, t.csv, t.qui, maintenant())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 @app.get("/api/sauvegarde", dependencies=[Depends(acces_bureau)])
